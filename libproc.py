@@ -5,8 +5,8 @@ import librosa
 # FFT AUDIO PROCESSOR
 # ============================================
 
-min_freq = 40
-max_freq = 14000
+min_freq = 100
+max_freq = 8000
 fft_size = 1024
 bands = 32
 hop_length = 512 # 50% overlap
@@ -71,7 +71,7 @@ class AudioProcessor:
             low = band_edges[i]
             high = band_edges[i + 1]
 
-            #print(f"Band {i}: {low:.1f} Hz - {high:.1f} Hz")
+            # print(f"Band {i}: {low:.1f} Hz - {high:.1f} Hz")
 
             # FFT bin indices in this range
             bins = np.where(
@@ -139,13 +139,13 @@ class AudioProcessor:
                 value = 0
 
             else:
-                # Average energy in band
-                #value = np.mean(magnitude[bins])
-                #value = np.max(magnitude[bins])
-                value = np.sqrt(np.mean(magnitude[bins] ** 2))
+                 value = np.mean(magnitude[bins])
+                # value = np.max(magnitude[bins])
+                # value = np.sqrt(np.mean(magnitude[bins] ** 2))
+                # value = np.sum(magnitude[bins])
 
-            weight = 1.0 + (i / self.bands) * 3
-            value *= weight
+            #weight = 1.0 + (i / self.bands) * 3
+            #value *= weight
                 
             band_values.append(value)
 
@@ -156,8 +156,9 @@ class AudioProcessor:
         # LOG SCALE
         # ------------------------------------
 
-        # Human hearing is logarithmic
         band_values = np.log1p(band_values)
+        #band_values = np.sqrt(band_values)
+        #band_values = np.power(band_values, 0.4)
 
         # ------------------------------------
         # NORMALIZE TO 0-1
@@ -168,7 +169,7 @@ class AudioProcessor:
         if max_value > 0:
             band_values /= max_value
         
-        band_values = np.power(band_values, 0.7)
+        #band_values = np.power(band_values, 0.7)
 
         # ------------------------------------
         # RETURN

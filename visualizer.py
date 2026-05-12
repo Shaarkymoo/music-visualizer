@@ -21,7 +21,7 @@ WINDOW_WIDTH = GRID_WIDTH * (CELL_SIZE + CELL_MARGIN) + CELL_MARGIN
 WINDOW_HEIGHT = GRID_HEIGHT * (CELL_SIZE + CELL_MARGIN) + CELL_MARGIN
 
 # OPTIONAL SMOOTHING
-responsiveness = 0.2 # 1 = no smoothing, 0 = max smoothing meaning no values.
+responsiveness = 1 # 1 = no smoothing, 0 = max smoothing meaning no values.
 
 # ============================================
 # COLORS
