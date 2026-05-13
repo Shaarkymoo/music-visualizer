@@ -1,5 +1,4 @@
 import pygame
-import random
 import sys
 import colorsys
 from libproc import AudioProcessor
@@ -8,255 +7,241 @@ from libproc import AudioProcessor
 # CONFIG
 # ============================================
 
-GRID_WIDTH = 32
+MUSIC_FILE = "E:/Shaarav/playlists/heavy rock band/Nookie - limpbizkit.mp3"
+MUSIC_FILE = "E:/Shaarav/playlists/"
+
+GRID_WIDTH  = 32
 GRID_HEIGHT = 16
 
-CELL_SIZE = 30
+CELL_SIZE   = 30
 CELL_MARGIN = 3
-
-horizontal_spread = 8
-vertical_spread = 3
-
-speed_multiplier = 0.15
-
-active_brightness = 1.0
-inactive_brightness = 0.05
-
-saturation = 0.85
 
 FPS = 60
 
 # Window size
-WINDOW_WIDTH = GRID_WIDTH * (CELL_SIZE + CELL_MARGIN) + CELL_MARGIN
+WINDOW_WIDTH  = GRID_WIDTH  * (CELL_SIZE + CELL_MARGIN) + CELL_MARGIN
 WINDOW_HEIGHT = GRID_HEIGHT * (CELL_SIZE + CELL_MARGIN) + CELL_MARGIN
 
-# OPTIONAL SMOOTHING
-responsiveness = 1 # 1 = no smoothing, 0 = max smoothing meaning no values.
+# ============================================
+# RENDERER CONFIG
+# ============================================
+
+horizontal_spread  = 8      # hue degrees per column
+vertical_spread    = 3      # hue degrees per row
+speed_multiplier   = 0.15   # hue animation speed
+
+active_brightness  = 1.0
+inactive_brightness = 0.04
+
+saturation         = 0.90
+
+# Smoothing: higher = more responsive, lower = smoother trails
+# 0.6–0.8 is a good range for rock music
+responsiveness     = 0.75
 
 # ============================================
 # COLORS
 # ============================================
 
 BLACK = (0, 0, 0)
-DARK_GRAY = (25, 25, 25)
 
 # ============================================
-# PYGAME INIT
+# RGB FRAME BUILDER
+# ============================================
+# This class is the ONLY place that knows about
+# colors. It takes band values and returns a
+# 2-D list of RGB tuples:
+#   frame[row][col] = (r, g, b)   r/g/b in 0–255
+#
+# Swap this class out for an ESP32 serial sender
+# and the rest of the code stays identical.
 # ============================================
 
-pygame.init()
+class RGBFrameBuilder:
 
-screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-pygame.display.set_caption("16x32 Audio Visualizer")
+    def __init__(self, cols=GRID_WIDTH, rows=GRID_HEIGHT):
 
-clock = pygame.time.Clock()
+        self.cols        = cols
+        self.rows        = rows
+        self.time_offset = 0.0
 
-# ============================================
-# VISUALIZER CLASS
-# ============================================
+    def build(self, band_values):
+        """
+        band_values : list of 32 floats in [0.0, 1.0]
 
-class Equalizer16x32:
+        Returns:
+            frame : list[GRID_HEIGHT][GRID_WIDTH] of (r, g, b) tuples
+        """
 
-    def __init__(self):
+        # Advance hue animation
+        self.time_offset = (
+            self.time_offset + horizontal_spread * speed_multiplier
+        ) % 360.0
 
-        self.columns = GRID_WIDTH
-        self.time_offset = 0
-        self.rows = GRID_HEIGHT
+        # Pre-compute active row heights and update peak trackers
+        active_heights = []
+        for col, val in enumerate(band_values):
+            h = min(self.rows, round(val * self.rows))
+            active_heights.append(h)
 
-        # Current FFT heights
-        self.values = [0] * self.columns
 
-    # ----------------------------------------
-    # Set FFT values
-    # Input:
-    # [0.0 -> 1.0] * 32
-    # ----------------------------------------
-    def update(self, fft_values):
+        # Build the 2-D RGB frame
+        # row 0 = top of grid, row (rows-1) = bottom
+        frame = []
+        for row in range(self.rows):
+            pixel_row = []
+            for col in range(self.cols):
 
-        if len(fft_values) != self.columns:
-            raise ValueError("Need exactly 32 FFT values")
+                active_height = active_heights[col]
 
-        # Clamp values to 0-1
-        self.values = [
-            max(0.0, min(1.0, v))
-            for v in fft_values
-        ]
-        
-    # ============================================
-    # DRAW MATRIX
-    # ============================================
-
-    def draw(self, surface):
-
-        surface.fill(BLACK)
-
-        # ----------------------------------------
-        # Animate hue shift
-        # ----------------------------------------
-
-        self.time_offset += horizontal_spread * speed_multiplier
-
-        # Keep hue wrapped
-        self.time_offset %= 360
-
-        # ----------------------------------------
-        # Draw cells
-        # ----------------------------------------
-
-        for col in range(self.columns):
-
-            # Convert normalized FFT value to height
-            active_height = min(self.rows, round(self.values[col] * self.rows))
-
-            for row in range(self.rows):
+                # bottom-up: row 0 in our loop is the TOP of the display,
+                # so "row < active_height" counts from the bottom
+                display_row  = self.rows - 1 - row   # 0 = bottom
+                is_active    = display_row < active_height
 
                 # --------------------------------
-                # Bottom-up rendering
+                # Hue: shifts across columns AND
+                # rows so the gradient feels
+                # "attached" to the bar
                 # --------------------------------
-
-                inverted_row = self.rows - 1 - row
-
-                x = col * (CELL_SIZE + CELL_MARGIN) + CELL_MARGIN
-                y = inverted_row * (CELL_SIZE + CELL_MARGIN) + CELL_MARGIN
-
-                # --------------------------------
-                # Determine active state
-                # --------------------------------
-
-                is_active = row < active_height
-
-                # --------------------------------
-                # HSV COLOR GENERATION
-                # --------------------------------
-
-                # visual_row makes gradient
-                # feel attached to the bar
-                visual_row = row
-
                 hue = (
                     self.time_offset
-                    + col * horizontal_spread
-                    + visual_row * vertical_spread
-                ) % 360
+                    + col  * horizontal_spread
+                    + display_row * vertical_spread
+                ) % 360.0
 
-                # HSV expects:
-                # H = 0→1
-                # S = 0→1
-                # V = 0→1
+                hue_n = hue / 360.0
 
-                hue_normalized = hue / 360.0
+                if is_active:
+                    r, g, b = colorsys.hsv_to_rgb(hue_n, saturation, active_brightness)
+                else:
+                    r, g, b = colorsys.hsv_to_rgb(hue_n, saturation, inactive_brightness)
 
-                brightness = (
-                    active_brightness
-                    if is_active
-                    else inactive_brightness
-                )
+                pixel_row.append((int(r * 255), int(g * 255), int(b * 255)))
 
-                r, g, b = colorsys.hsv_to_rgb(
-                    hue_normalized,
-                    saturation,
-                    brightness
-                )
+            frame.append(pixel_row)
 
-                # Convert float RGB to pygame RGB
-                color = (
-                    int(r * 255),
-                    int(g * 255),
-                    int(b * 255)
-                )
+        return frame
 
-                # --------------------------------
-                # DRAW CELL
-                # --------------------------------
 
+# ============================================
+# PYGAME DISPLAY
+# Receives a completed RGB frame and draws it.
+# Replace this class with ESP32Serial to drive
+# physical LEDs — zero other changes needed.
+# ============================================
+
+class PygameDisplay:
+
+    def __init__(self, cols=GRID_WIDTH, rows=GRID_HEIGHT):
+        self.cols   = cols
+        self.rows   = rows
+        self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+        pygame.display.set_caption("Audio Visualizer")
+
+    def render(self, frame):
+        """
+        frame : list[rows][cols] of (r, g, b)
+        """
+        self.screen.fill(BLACK)
+
+        for row in range(self.rows):
+            for col in range(self.cols):
+                color = frame[row][col]
+                x = col * (CELL_SIZE + CELL_MARGIN) + CELL_MARGIN
+                y = row * (CELL_SIZE + CELL_MARGIN) + CELL_MARGIN
                 pygame.draw.rect(
-                    surface,
+                    self.screen,
                     color,
                     (x, y, CELL_SIZE, CELL_SIZE)
                 )
 
+        pygame.display.flip()
+
 
 # ============================================
-# CREATE VISUALIZER
+# EXAMPLE ESP32 DISPLAY STUB
+# Uncomment and swap in place of PygameDisplay
+# when you move to hardware.
+#
+# class ESP32SerialDisplay:
+#     def __init__(self, port="COM3", baud=921600):
+#         import serial
+#         self.ser = serial.Serial(port, baud)
+#
+#     def render(self, frame):
+#         # Flatten frame to bytes and send
+#         packet = bytearray()
+#         for row in frame:
+#             for r, g, b in row:
+#                 packet += bytes([r, g, b])
+#         self.ser.write(packet)
 # ============================================
 
-visualizer = Equalizer16x32()
 
 # ============================================
-# TEST MODE
-# Random fake FFT values
+# MAIN
 # ============================================
 
-def generate_fake_fft():
+def main():
 
-    return [
-        random.random()
-        for _ in range(32)
-    ]
+    pygame.init()
 
-# ============================================
-# MAIN LOOP
-# ============================================
+    processor = AudioProcessor(MUSIC_FILE)
+    builder   = RGBFrameBuilder()
+    display   = PygameDisplay()
 
-MUSIC_FILE = "E:\Shaarav\playlists\old guitar\Dirty Diana - Michael Jackson.mp3"
+    clock     = pygame.time.Clock()
 
-processor = AudioProcessor(MUSIC_FILE)
+    # Smoothed band values (carried across frames)
+    smoothed  = [0.0] * GRID_WIDTH
 
-pygame.mixer.init()
-pygame.mixer.music.load(MUSIC_FILE)
-pygame.mixer.music.play()
+    pygame.mixer.init()
+    pygame.mixer.music.load(MUSIC_FILE)
+    pygame.mixer.music.play()
 
-while True:
+    while True:
 
-    # ----------------------------------------
-    # EVENTS
-    # ----------------------------------------
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            pygame.quit()
-            sys.exit()
+        # ----------------------------------------
+        # Events
+        # ----------------------------------------
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
 
-    # ----------------------------------------
-    # Get playback position
-    # ----------------------------------------
+        # ----------------------------------------
+        # Sync processor to actual playback clock
+        # This is the key fix for audio/visual lag:
+        # we always read the FFT at the sample that
+        # matches what you're hearing RIGHT NOW.
+        # ----------------------------------------
+        playback_ms  = pygame.mixer.music.get_pos()
+        fft_values   = processor.get_frame_at(playback_ms)
 
-    music_pos_ms = pygame.mixer.music.get_pos()
+        if fft_values is not None:
+            # Asymmetric smoothing:
+            # attack (rising) is fast, decay (falling) is slower.
+            # This makes beats hit sharply but bars fall gracefully.
+            for i in range(len(smoothed)):
+                new = fft_values[i]
+                old = smoothed[i]
+                if new > old:
+                    # Fast attack
+                    smoothed[i] = old * (1 - responsiveness) + new * responsiveness
+                else:
+                    # Slower decay (half the responsiveness)
+                    decay = responsiveness * 0.5
+                    smoothed[i] = old * (1 - decay) + new * decay
 
-    # Convert ms → samples
-    sample_position = int(
-        (music_pos_ms / 1000.0)
-        * processor.sample_rate
-    )
+        # ----------------------------------------
+        # Build RGB frame → display
+        # ----------------------------------------
+        frame = builder.build(smoothed)
+        display.render(frame)
 
-    # Update processor position
-    processor.position = sample_position
+        clock.tick(FPS)
 
-    # ----------------------------------------
-    # UPDATE FFT VALUES
-    # ----------------------------------------
-    #fft_values = generate_fake_fft()
-    # fft_values = processor.get_next_frame()
 
-    # if fft_values is not None:
-    #     visualizer.update(fft_values)
-
-    fft_values = processor.get_next_frame()
-
-    if fft_values is not None:
-
-        visualizer.values = [
-            old * (1 - responsiveness) + new * responsiveness
-            for old, new in zip(
-                visualizer.values,
-                fft_values
-            )
-        ]
-
-    # ----------------------------------------
-    # DRAW
-    # ----------------------------------------
-    visualizer.draw(screen)
-
-    pygame.display.flip()
-
-    clock.tick(FPS)
+if __name__ == "__main__":
+    main()
