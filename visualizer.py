@@ -14,6 +14,16 @@ GRID_HEIGHT = 16
 CELL_SIZE = 30
 CELL_MARGIN = 3
 
+horizontal_spread = 8
+vertical_spread = 3
+
+speed_multiplier = 0.15
+
+active_brightness = 1.0
+inactive_brightness = 0.05
+
+saturation = 0.85
+
 FPS = 60
 
 # Window size
@@ -37,7 +47,7 @@ DARK_GRAY = (25, 25, 25)
 pygame.init()
 
 screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-pygame.display.set_caption("16x16 Audio Visualizer")
+pygame.display.set_caption("16x32 Audio Visualizer")
 
 clock = pygame.time.Clock()
 
@@ -45,7 +55,7 @@ clock = pygame.time.Clock()
 # VISUALIZER CLASS
 # ============================================
 
-class Equalizer16x16:
+class Equalizer16x32:
 
     def __init__(self):
 
@@ -59,12 +69,12 @@ class Equalizer16x16:
     # ----------------------------------------
     # Set FFT values
     # Input:
-    # [0.0 -> 1.0] * 16
+    # [0.0 -> 1.0] * 32
     # ----------------------------------------
     def update(self, fft_values):
 
         if len(fft_values) != self.columns:
-            raise ValueError("Need exactly 16 FFT values")
+            raise ValueError("Need exactly 32 FFT values")
 
         # Clamp values to 0-1
         self.values = [
@@ -81,22 +91,10 @@ class Equalizer16x16:
         surface.fill(BLACK)
 
         # ----------------------------------------
-        # COLOR SETTINGS
-        # ----------------------------------------
-
-        horizontal_spread = 10
-        vertical_spread = 3
-
-        active_brightness = 1.0
-        inactive_brightness = 0.05
-
-        saturation = 0.85
-
-        # ----------------------------------------
         # Animate hue shift
         # ----------------------------------------
 
-        self.time_offset += horizontal_spread * 0.25
+        self.time_offset += horizontal_spread * speed_multiplier
 
         # Keep hue wrapped
         self.time_offset %= 360
@@ -182,7 +180,7 @@ class Equalizer16x16:
 # CREATE VISUALIZER
 # ============================================
 
-visualizer = Equalizer16x16()
+visualizer = Equalizer16x32()
 
 # ============================================
 # TEST MODE
@@ -200,7 +198,7 @@ def generate_fake_fft():
 # MAIN LOOP
 # ============================================
 
-MUSIC_FILE = "E:\\Shaarav\\playlists\\heavy rock band\\Limp Bizkit - Rollin'.mp3"
+MUSIC_FILE = "E:\Shaarav\playlists\old guitar\Dirty Diana - Michael Jackson.mp3"
 
 processor = AudioProcessor(MUSIC_FILE)
 
