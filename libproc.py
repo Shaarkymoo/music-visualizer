@@ -11,10 +11,10 @@ bands     = 32
 
 BANDS = [
     #  low    high   gain
-    (115,   120,   1.0),   # 0  ← was 0.5, raised so col 3 isn't invisible
+    (100,   120,   1.0),   # 0  ← was 0.5, raised so col 3 isn't invisible
     (120,   145,   1.0),   # 1
-    (145,   160,   1.0),   # 2
-    (160,   175,   1.0),   # 3  ← this was your "missing" column
+    (145,   165,   1.0),   # 2
+    (165,   175,   1.0),   # 3  ← this was your "missing" column
     (175,   200,   1.0),   # 4
     (200,   230,   1.0),   # 5
     (230,   260,   1.0),   # 6

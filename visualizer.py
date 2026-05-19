@@ -8,7 +8,6 @@ from libproc import AudioProcessor
 # ============================================
 
 MUSIC_FILE = "E:/Shaarav/playlists/heavy rock band/Nookie - limpbizkit.mp3"
-MUSIC_FILE = "E:/Shaarav/playlists/"
 
 GRID_WIDTH  = 32
 GRID_HEIGHT = 16

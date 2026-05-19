@@ -1,27 +1,97 @@
-#include <FastLED.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <Adafruit_NeoPixel.h>
 
-#define LED_PIN     5
-#define NUM_LEDS    16
-#define BRIGHTNESS  120
-#define LED_TYPE    WS2812B
-#define COLOR_ORDER GRB
+#define LED_PIN 5
+#define LED_COUNT 64
 
-CRGB leds[NUM_LEDS];
+const char* ssid = "Wokwi-GUEST";
+const char* password = "";
+
+// Replace with your server endpoint
+const char* serverUrl = "http://your-server-ip/matrix";
+
+Adafruit_NeoPixel matrix(
+  LED_COUNT,
+  LED_PIN,
+  NEO_GRB + NEO_KHZ800
+);
+
+void connectWiFi() {
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("\nWiFi connected");
+}
+
+void fetchMatrixData() {
+  if (WiFi.status() == WL_CONNECTED) {
+
+    HTTPClient http;
+
+    http.begin(serverUrl);
+
+    int httpCode = http.GET();
+
+    if (httpCode > 0) {
+
+      String payload = http.getString();
+
+      Serial.println(payload);
+
+      DynamicJsonDocument doc(8192);
+
+      DeserializationError error =
+        deserializeJson(doc, payload);
+
+      if (!error) {
+
+        JsonArray pixels = doc["pixels"];
+
+        for (int i = 0; i < LED_COUNT; i++) {
+
+          int r = pixels[i][0];
+          int g = pixels[i][1];
+          int b = pixels[i][2];
+
+          matrix.setPixelColor(
+            i,
+            matrix.Color(r, g, b)
+          );
+        }
+
+        matrix.show();
+      }
+      else {
+        Serial.println("JSON parse failed");
+      }
+    }
+    else {
+      Serial.println("HTTP request failed");
+    }
+
+    http.end();
+  }
+}
 
 void setup() {
-  FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS);
-  FastLED.setBrightness(BRIGHTNESS);
+
+  Serial.begin(115200);
+
+  matrix.begin();
+  matrix.show();
+
+  connectWiFi();
 }
 
 void loop() {
-  static uint8_t hue = 0;
 
-  for(int i = 0; i < NUM_LEDS; i++) {
-    leds[i] = CHSV(hue + (i * 10), 255, 255);
-  }
+  fetchMatrixData();
 
-  FastLED.show();
-  hue++;
-
-  delay(20);
+  delay(100);
 }
