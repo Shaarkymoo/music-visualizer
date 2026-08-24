@@ -25,14 +25,17 @@ import pack
 HOLD_SECONDS = 3.0
 
 
-def raw_pack_physical(phys_colors):
+def raw_pack_physical(phys_colors, seq):
     """phys_colors: list of 512 (r,g,b) in PHYSICAL chain order.
+    seq: frame sequence number (must increment per frame — the firmware
+    drops stale/out-of-order frames, so a constant seq would freeze the
+    display after the first frame).
     Returns a full frame packet WITHOUT applying pack.REMAP — payload is
     sent in chain order as-is (GRB bytes)."""
     payload = bytearray()
     for (r, g, b) in phys_colors:
         payload += bytes((g, r, b))
-    header = pack.MAGIC + pack.FRAME_LEN.to_bytes(2, "little") + (0).to_bytes(2, "little")
+    header = pack.MAGIC + pack.FRAME_LEN.to_bytes(2, "little") + (seq & 0xFFFF).to_bytes(2, "little")
     return header + bytes(payload)
 
 
@@ -63,13 +66,16 @@ def main():
     print("For each chunk, note WHICH physical board lights + where the RED")
     print("marker sits on that board.")
     try:
+        seq = 0
         while True:
             for chunk in range(8):
                 print(f"--- CHUNK {chunk} (LEDs {chunk*64}..{chunk*64+63}) ---",
                       flush=True)
-                frame = raw_pack_physical(build_chunk_physical(chunk))
+                colors = build_chunk_physical(chunk)
                 deadline = time.monotonic() + HOLD_SECONDS
                 while time.monotonic() < deadline:
+                    frame = raw_pack_physical(colors, seq)
+                    seq = (seq + 1) & 0xFFFF
                     sink.ser.write(frame)
                     sink.ser.flush()
                     time.sleep(0.01)
