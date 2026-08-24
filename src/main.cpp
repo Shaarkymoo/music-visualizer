@@ -1,5 +1,4 @@
 #include <FastLED.h>
-#include <WiFi.h>   // only needed for ENABLE_UDP
 
 // ============================================================
 // MODE CONFIG
@@ -73,9 +72,12 @@ void applyCurrentLimiter() {
 // ============================================================
 void processFrame(const uint8_t* payload, uint16_t seq) {
   if (have_seq) {
-    // drop stale / out-of-order frames
-    if (seq != (uint16_t)(last_seq + 1)) {
-      // allow only forward jump by 1; otherwise ignore (resync case)
+    uint16_t expected = (uint16_t)(last_seq + 1);
+    // Accept exact next, OR a host-restart resync (seq back to 0 after a gap),
+    // OR small forward jumps (dropped frames on the host side).
+    bool ok = (seq == expected) || (seq == 0) || ((seq > last_seq) && ((uint16_t)(seq - last_seq) <= 8));
+    if (!ok) {
+      // genuinely stale / out-of-order — drop
       Serial.println("drop stale");
       return;
     }
@@ -95,8 +97,10 @@ void processFrame(const uint8_t* payload, uint16_t seq) {
   FastLED.show();
 }
 
-void handleSerial() {
+bool handleSerial() {
+  bool read_any = false;
   while (Serial.available() > 0) {
+    read_any = true;
     uint8_t b = Serial.read();
 
     if (!in_frame) {
@@ -111,19 +115,29 @@ void handleSerial() {
 
     // We have magic. Now read LEN (2), SEQ (2), then payload.
     if (rxlen < 2) {
-      // collecting LEN low byte then high byte; verify == EXPECTED_LEN
+      // collecting LEN low byte then high byte
       rxbuf[rxlen] = b;
       rxlen++;
       continue;
     }
     if (rxlen >= 2 && rxlen < 4) {
+      if (rxlen == 2) {
+        // LEN bytes are complete — validate against EXPECTED_LEN
+        uint16_t len = ((uint16_t)rxbuf[0]) | (((uint16_t)rxbuf[1]) << 8);
+        if (len != EXPECTED_LEN) {
+          // bad frame header — resync
+          in_frame = false;
+          rxlen = 0;
+          scan_prev = 0;
+          continue;
+        }
+      }
       rxbuf[rxlen] = b;
       rxlen++;
       continue;
     }
 
     uint16_t seq = ((uint16_t)rxbuf[2]) | (((uint16_t)rxbuf[3]) << 8);
-    // We skip validating LEN for simplicity here (assume EXPECTED_LEN).
     if (rxlen < 4 + PAYLOAD_LEN) {
       rxbuf[rxlen] = b;
       rxlen++;
@@ -140,6 +154,7 @@ void handleSerial() {
     rxlen = 0;
     scan_prev = 0;
   }
+  return read_any;
 }
 
 // ============================================================
@@ -172,6 +187,7 @@ void runMapTest() {
       }
     }
   }
+  applyCurrentLimiter();
   FastLED.show();
   delay(100);   // static — stays put, refreshed harmlessly each loop
 }
@@ -182,6 +198,7 @@ void runMapTest() {
 void runRainbowSweep() {
   static uint8_t hue = 0;
   fill_rainbow(leds, NUM_LEDS, hue, 1);
+  applyCurrentLimiter();
   FastLED.show();
   hue++;
   delay(30);
@@ -191,6 +208,7 @@ void runRainbowSweep() {
 // DORMANT UDP RECEIVE (future broadcast path)
 // ============================================================
 #ifdef ENABLE_UDP
+#include <WiFi.h>
 #include <WiFiUdp.h>
 const char* WIFI_SSID = "YourWiFiSSID";
 const char* WIFI_PASSWORD = "YourWiFiPassword";
@@ -210,11 +228,11 @@ void connectWiFi() {
 
 void handleUDP() {
   int packetSize = udp.parsePacket();
-  if (packetSize == 4 + PAYLOAD_LEN) {
-    uint8_t buf[4 + PAYLOAD_LEN];
+  if (packetSize == 6 + PAYLOAD_LEN) {   // MAGIC(2)+LEN(2)+SEQ(2)+payload
+    uint8_t buf[6 + PAYLOAD_LEN];
     udp.read(buf, sizeof(buf));
-    uint16_t seq = ((uint16_t)buf[2]) | (((uint16_t)buf[3]) << 8);
-    processFrame(&buf[4], seq);
+    uint16_t seq = ((uint16_t)buf[4]) | (((uint16_t)buf[5]) << 8);
+    processFrame(&buf[6], seq);
   }
 }
 #endif
@@ -223,7 +241,7 @@ void handleUDP() {
 // SETUP / LOOP
 // ============================================================
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(921600);
   delay(500);
   FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS);
   FastLED.setBrightness(BRIGHTNESS);
@@ -251,7 +269,9 @@ void loop() {
     runRainbowSweep();
     return;
   }
-  handleSerial();
+  if (!handleSerial()) {
+    vTaskDelay(1);   // no bytes — yield so the Arduino idle task can run
+  }
 #ifdef ENABLE_UDP
   handleUDP();
 #endif

@@ -438,6 +438,7 @@ def main():
         print(f"Serial: connected on {getattr(sink.ser, 'port', '?')}")
     except Exception as e:
         print(f"Serial: NOT connected ({e}) — running headless")
+        sink = None   # ensure run_visualizer sees a real None, not a half-open sink
 
     # Run visualizer in a background thread
     vis_thread = threading.Thread(

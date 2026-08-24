@@ -38,7 +38,9 @@ class SerialSink:
         if gap < self._min_gap:
             return
         data = pack.pack_frame(frame)
-        self.ser.write(data)
+        written = self.ser.write(data)
+        if written != len(data):
+            print(f"WARN: serial write truncated ({written}/{len(data)} bytes)")
         self.ser.flush()
         self._last = now
 
