@@ -13,3 +13,5 @@ __pycache__/
 
 # OS
 .DS_Store
+/.vscode
+/python/.pytest_cache
