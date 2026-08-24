@@ -454,10 +454,13 @@ Run via player.py. Reads SharedState for config, bands, playback commands.
 
 import sys
 import os
+import colorsys
 from libproc import AudioProcessor
 from config import SharedState, SERIAL_PORT, SERIAL_BAUD, SERIAL_MAX_FPS
 
-# ---- RGB frame builder (unchanged from before) ----class RGBFrameBuilder:
+# ---- RGB frame builder (unchanged from before) ----
+
+class RGBFrameBuilder:
     def __init__(self, cfg: SharedState, cols=32, rows=16):
         self.cfg = cfg
         self.cols = cols
@@ -493,6 +496,8 @@ from config import SharedState, SERIAL_PORT, SERIAL_BAUD, SERIAL_MAX_FPS
 def run_visualizer(state: SharedState, sink=None):
     """Processing loop. sink is a SerialSink (or None for headless)."""
     import colorsys
+    import pygame
+    pygame.mixer.init()          # audio backend — no display window needed
     processor = AudioProcessor(cfg=state)
     builder = RGBFrameBuilder(cfg=state)
     smoothed = [0.0] * 32
@@ -706,8 +711,10 @@ const uint8_t MAGIC0 = 0xAA;
 const uint8_t MAGIC1 = 0xAA;
 const uint16_t EXPECTED_LEN = 0x0600;  // 1536
 const size_t PAYLOAD_LEN = NUM_LEDS * 3;
+const size_t FRAME_HEADER_LEN = 4;   // LEN(2) + SEQ(2)
+const size_t FRAME_BUF_LEN = FRAME_HEADER_LEN + PAYLOAD_LEN;  // 4 + 1536 = 1540
 
-static uint8_t rxbuf[PAYLOAD_LEN];
+static uint8_t rxbuf[FRAME_BUF_LEN];
 static size_t rxlen = 0;
 static bool in_frame = false;
 static uint16_t last_seq = 0;
