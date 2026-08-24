@@ -1,10 +1,13 @@
 """
 chase_test.py — Panel/chain chase test for determining the physical board order.
 
-Sends frames over the USB serial link (through the REAL pack.py + serial_sink.py
-pipeline). Each step lights ONE 64-LED chunk (one physical 8x8 board) solid
-white, with the chunk's FIRST LED red as an orientation marker, for
-HOLD_SECONDS, then moves to the next chunk.
+Sends RAW physical-LED frames over the USB serial link (bypassing pack.py's
+REMAP on purpose — its job is to DISCOVER which physical board each chunk
+drives, so the real REMAP can be encoded from the observations).
+
+Each step lights ONE 64-LED chunk (one physical 8x8 board) solid white, with
+the chunk's FIRST LED red as an orientation marker, for HOLD_SECONDS, then
+moves to the next chunk.
 
 Use: watch the wall and note, for each chunk number printed here, WHICH
 physical board lights up (top-left, bottom-left, etc.) and where the red
@@ -22,16 +25,25 @@ import pack
 HOLD_SECONDS = 3.0
 
 
-def build_chunk_frame(chunk: int):
-    """Frame with one 64-LED chunk lit: white, first LED of chunk = red."""
-    frame = [[(0, 0, 0)] * pack.GRID_COLS for _ in range(pack.GRID_ROWS)]
+def raw_pack_physical(phys_colors):
+    """phys_colors: list of 512 (r,g,b) in PHYSICAL chain order.
+    Returns a full frame packet WITHOUT applying pack.REMAP — payload is
+    sent in chain order as-is (GRB bytes)."""
+    payload = bytearray()
+    for (r, g, b) in phys_colors:
+        payload += bytes((g, r, b))
+    header = pack.MAGIC + pack.FRAME_LEN.to_bytes(2, "little") + (0).to_bytes(2, "little")
+    return header + bytes(payload)
+
+
+def build_chunk_physical(chunk: int):
+    """512 (r,g,b) in physical chain order; one 64-LED chunk lit white,
+    first LED of the chunk red."""
+    colors = [(0, 0, 0)] * pack.NUM_LEDS
     for i in range(64):
-        row = chunk // 4  # chunk index -> block row (2 rows of 4 chunks)
-        col = chunk % 4
-        y = row * 8 + (i // 8)
-        x = col * 8 + (i % 8)
-        frame[y][x] = (255, 0, 0) if i == 0 else (255, 255, 255)
-    return frame
+        k = chunk * 64 + i
+        colors[k] = (255, 0, 0) if i == 0 else (255, 255, 255)
+    return colors
 
 
 def main():
@@ -47,7 +59,7 @@ def main():
         print(f"Serial NOT connected: {e}")
         sys.exit(1)
 
-    print("Chase test: lighting one 8x8 board at a time (chain order).")
+    print("Chase test: lighting one 8x8 board at a time (raw chain order).")
     print("For each chunk, note WHICH physical board lights + where the RED")
     print("marker sits on that board.")
     try:
@@ -55,10 +67,11 @@ def main():
             for chunk in range(8):
                 print(f"--- CHUNK {chunk} (LEDs {chunk*64}..{chunk*64+63}) ---",
                       flush=True)
-                frame = build_chunk_frame(chunk)
+                frame = raw_pack_physical(build_chunk_physical(chunk))
                 deadline = time.monotonic() + HOLD_SECONDS
                 while time.monotonic() < deadline:
-                    sink.send_frame(frame)
+                    sink.ser.write(frame)
+                    sink.ser.flush()
                     time.sleep(0.01)
             print("cycle complete — repeating")
     except KeyboardInterrupt:
