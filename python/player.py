@@ -2,8 +2,8 @@
 player.py  — THE ENTRY POINT.  Run this.
 
 Layout:
-  Left  : pygame visualizer window (32×16 grid, top-left of screen)
-  Right : tkinter control panel (tabs + playback bar)
+  tkinter control panel (tabs + playback bar). The visualizer renders to
+  the LED wall via the serial sink (headless if no port is found).
 """
 
 import tkinter as tk
@@ -13,28 +13,20 @@ import os
 import glob
 
 from config     import SharedState
+import config
+import serial_sink
 import visualizer as vis_module
 
 
 # ============================================
-# DIMENSIONS  (must match visualizer.py)
+# DIMENSIONS  (control panel only — no grid window)
 # ============================================
 
-CELL_SIZE    = 30
-CELL_MARGIN  = 3
-GRID_W       = 32
-GRID_H       = 16
-
-VIS_W = GRID_W * (CELL_SIZE + CELL_MARGIN) + CELL_MARGIN   # 1027
-VIS_H = GRID_H * (CELL_SIZE + CELL_MARGIN) + CELL_MARGIN   #  531
-
 PANEL_W = 480
-PANEL_H = VIS_H + 90   # visualizer height + playback bar
+PANEL_H = 640
 
-VIS_X   = 0
-VIS_Y   = 30    # below title bar
-PANEL_X = VIS_W + 2
-PANEL_Y = VIS_Y
+PANEL_X = 0
+PANEL_Y = 0
 
 
 # ============================================
@@ -103,6 +95,8 @@ class PlayerUI:
         self._build_playback_bar()
 
         self._seek_dragging = False
+        self._was_playing   = False
+        self._paused_flag   = False
         self._tick()
 
     # ------------------------------------------
@@ -337,6 +331,9 @@ class PlayerUI:
     # ------------------------------------------
 
     def _pause(self):
+        # Track user-initiated pause so _tick can tell it apart from a
+        # track ending naturally (which should auto-advance).
+        self._paused_flag = not self._paused_flag
         self.state.command_pause()
 
     def _next(self):
@@ -402,6 +399,14 @@ class PlayerUI:
     def _tick(self):
         is_playing, pos_frac, dur = self.state.get_playback_status()
 
+        # Auto-advance: a track that ends naturally (was playing, now not,
+        # and the user didn't pause it) moves on to the next track.
+        if self._was_playing and not is_playing and not self._paused_flag:
+            self.state.command_next()
+        self._was_playing = is_playing
+        if is_playing:
+            self._paused_flag = False
+
         if not self._seek_dragging:
             self._seek_var.set(pos_frac)
             self._time_lbl.config(text=fmt_time(pos_frac * dur))
@@ -419,10 +424,25 @@ class PlayerUI:
 def main():
     state = SharedState()
 
+    # Open serial sink (auto-detect port). On failure, run headless (no LED out).
+    sink = None
+    try:
+        sink = serial_sink.SerialSink(
+            port=config.SERIAL_PORT,
+            baud=config.SERIAL_BAUD,
+            max_fps=config.SERIAL_MAX_FPS,
+        )
+        sink.open()
+        # getattr: pyright types SerialSink.ser as None (set in __init__);
+        # at runtime open() guarantees it is a serial.Serial.
+        print(f"Serial: connected on {getattr(sink.ser, 'port', '?')}")
+    except Exception as e:
+        print(f"Serial: NOT connected ({e}) — running headless")
+
     # Run visualizer in a background thread
     vis_thread = threading.Thread(
         target=vis_module.run_visualizer,
-        args=(state,),
+        args=(state, sink),
         daemon=True,
     )
     vis_thread.start()
