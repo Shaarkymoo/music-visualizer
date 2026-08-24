@@ -1,4 +1,0 @@
-[wokwi]
-version = 1
-firmware = 'lightBoard\.pio\build\esp32doit-devkit-v1\firmware.bin'
-elf = 'lightBoard\.pio\build\esp32doit-devkit-v1\firmware.elf'
