@@ -1,2 +1,15 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
 
-/.venv
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Codegraph index (regenerable)
+.codegraph/
+
+# OS
+.DS_Store
