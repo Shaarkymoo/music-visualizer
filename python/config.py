@@ -184,3 +184,17 @@ class SharedState:
                 getattr(self, "_pos_frac",   0.0),
                 getattr(self, "_duration_s", 0.0),
             )
+
+
+# ============================================
+# SERIAL / NETWORK CONFIG
+# (UDP fields are dormant — see udp_sink.py)
+# ============================================
+
+SERIAL_PORT    = None     # None = auto-detect; or e.g. "/dev/ttyUSB0"
+SERIAL_BAUD    = 115200
+SERIAL_MAX_FPS = 40
+
+# Future UDP (unused until broadcast is enabled)
+# UDP_HOST = "192.168.29.212"
+# UDP_PORT = 7777
