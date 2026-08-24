@@ -5,7 +5,7 @@
 // MODE CONFIG
 // ============================================================
 #define CALIBRATION_MODE false
-#define MAP_TEST_MODE true
+#define MAP_TEST_MODE false
 // #define ENABLE_UDP        // UNCOMMENT to enable future UDP broadcast receive
 
 // ============================================================
