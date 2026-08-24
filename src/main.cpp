@@ -5,6 +5,7 @@
 // MODE CONFIG
 // ============================================================
 #define CALIBRATION_MODE false
+#define MAP_TEST_MODE false
 // #define ENABLE_UDP        // UNCOMMENT to enable future UDP broadcast receive
 
 // ============================================================
@@ -142,6 +143,29 @@ void handleSerial() {
 }
 
 // ============================================================
+// PANEL MAPPING TEST (diagnostic)
+// Lights one 8x8 panel at a time, cycling through all 8 panels.
+// Use to identify physical panel order + any 180° rotations.
+// ============================================================
+void runMapTest() {
+  static int step = 0;
+  FastLED.clear();
+  int panel = step % 8;
+  // panel index -> (row, col) block: 4 panels wide, 2 panels tall
+  int brow = panel / 4;      // block row (0 or 1)
+  int bcol = panel % 4;      // block col (0..3)
+  for (int i = 0; i < 64; i++) {
+    int y = (brow * 8) + (i / 8);
+    int x = (bcol * 8) + (i % 8);
+    int idx = y * 32 + x;
+    if (idx >= 0 && idx < NUM_LEDS) leds[idx] = CRGB::Red;
+  }
+  FastLED.show();
+  delay(1500);
+  step++;
+}
+
+// ============================================================
 // RAINBOW SWEEP (diagnostic)
 // ============================================================
 void runRainbowSweep() {
@@ -200,12 +224,18 @@ void setup() {
 #endif
   if (CALIBRATION_MODE) {
     Serial.println("MODE: Calibration — rainbow sweep");
+  } else if (MAP_TEST_MODE) {
+    Serial.println("MODE: Panel mapping test");
   } else {
     Serial.println("MODE: USB receive — waiting for frames");
   }
 }
 
 void loop() {
+  if (MAP_TEST_MODE) {
+    runMapTest();
+    return;
+  }
   if (CALIBRATION_MODE) {
     runRainbowSweep();
     return;
