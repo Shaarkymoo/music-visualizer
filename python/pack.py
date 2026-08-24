@@ -35,17 +35,25 @@ GRID_ROWS = 16
 
 CHUNK_BOARD_POS = [
     # chunk : (board_col, board_row)
-    (0, 1),   # 0 = bottom-left          (CONFIRMED)
-    (1, 1),   # 1 = bottom-mid-left      (pending chase test)
-    (0, 0),   # 2 = top-left             (pending chase test)
-    (1, 0),   # 3 = top-mid-left         (pending chase test)
-    (2, 1),   # 4 = bottom-mid-right     (CONFIRMED)
-    (3, 1),   # 5 = bottom-right         (pending chase test)
-    (2, 0),   # 6 = top-mid-right        (pending chase test)
-    (3, 0),   # 7 = top-right            (pending chase test)
+    # CONFIRMED by chase test (2026-08-24): lighting order was
+    # 5,1,6,2,7,3,8,4 with boards numbered 1-8 left-to-right,
+    # top-to-bottom. board_row 0 = top, board_col 0 = left.
+    (0, 1),   # 0 = board 5 = bottom-left
+    (0, 0),   # 1 = board 1 = top-left
+    (1, 1),   # 2 = board 6 = bottom-mid-left
+    (1, 0),   # 3 = board 2 = top-mid-left
+    (2, 1),   # 4 = board 7 = bottom-mid-right
+    (2, 0),   # 5 = board 3 = top-mid-right
+    (3, 1),   # 6 = board 8 = bottom-right
+    (3, 0),   # 7 = board 4 = top-right
 ]
 
 ALL_BOARDS_ROTATED_180 = True
+
+# HARDWARE QUIRK (not a remap issue): physical LED 0 (chunk 0's first LED,
+# the very first LED in the chain) has a stuck-green channel on this build.
+# It shows yellow when sent red, and a faint green when dark. Board 5
+# (bottom-left) is where this LED lives. Cosmetic; ignore in mapping.
 
 
 def build_remap():
