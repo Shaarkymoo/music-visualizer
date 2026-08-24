@@ -5,7 +5,7 @@
 // MODE CONFIG
 // ============================================================
 #define CALIBRATION_MODE false
-#define MAP_TEST_MODE false
+#define MAP_TEST_MODE true
 // #define ENABLE_UDP        // UNCOMMENT to enable future UDP broadcast receive
 
 // ============================================================
@@ -144,25 +144,36 @@ void handleSerial() {
 
 // ============================================================
 // PANEL MAPPING TEST (diagnostic)
-// Lights one 8x8 panel at a time, cycling through all 8 panels.
-// Use to identify physical panel order + any 180° rotations.
+// STATIC frame: all 8 panels lit at once, each a distinct color,
+// with a WHITE LED at each panel's top-left corner.
+//   - color identifies the logical panel index (legend below)
+//   - white dot position reveals a 180° rotation (dot lands on a
+//     different corner if the board is physically rotated)
+// Legend (logical panel index -> color):
+//   0=RED 1=GREEN 2=BLUE 3=YELLOW 4=CYAN 5=MAGENTA 6=ORANGE 7=PURPLE
 // ============================================================
 void runMapTest() {
-  static int step = 0;
+  static const CRGB colors[8] = {
+    CRGB::Red,    CRGB::Green,  CRGB::Blue,   CRGB::Yellow,
+    CRGB::Cyan,   CRGB::Magenta,CRGB::Orange, CRGB::Purple
+  };
   FastLED.clear();
-  int panel = step % 8;
-  // panel index -> (row, col) block: 4 panels wide, 2 panels tall
-  int brow = panel / 4;      // block row (0 or 1)
-  int bcol = panel % 4;      // block col (0..3)
-  for (int i = 0; i < 64; i++) {
-    int y = (brow * 8) + (i / 8);
-    int x = (bcol * 8) + (i % 8);
-    int idx = y * 32 + x;
-    if (idx >= 0 && idx < NUM_LEDS) leds[idx] = CRGB::Red;
+  for (int panel = 0; panel < 8; panel++) {
+    int brow = panel / 4;      // block row (0 or 1)
+    int bcol = panel % 4;      // block col (0..3)
+    CRGB c = colors[panel];
+    for (int i = 0; i < 64; i++) {
+      int y = (brow * 8) + (i / 8);
+      int x = (bcol * 8) + (i % 8);
+      int idx = y * 32 + x;
+      if (idx >= 0 && idx < NUM_LEDS) {
+        // i==0 is the local top-left LED of this panel's 8x8 block
+        leds[idx] = (i == 0) ? CRGB::White : c;
+      }
+    }
   }
   FastLED.show();
-  delay(1500);
-  step++;
+  delay(100);   // static — stays put, refreshed harmlessly each loop
 }
 
 // ============================================================
