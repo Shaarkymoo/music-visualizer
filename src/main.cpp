@@ -1,171 +1,217 @@
-/*
- * main.cpp — ESP32 LED Matrix Receiver
- *
- * Two modes:
- *   CALIBRATION_MODE = true  → infinite rainbow sweep (data-path test)
- *   CALIBRATION_MODE = false → connects WiFi, prints IP, blinks onboard LED
- *
- * Step 3: Set CALIBRATION_MODE = true, flash, watch for the rainbow.
- *         If LEDs light up, the data path (ESP32 → level shifter → boards)
- *         is proven. Switch to false later for normal operation.
- */
-
-#include <WiFi.h>
 #include <FastLED.h>
+#include <WiFi.h>   // only needed for ENABLE_UDP
 
 // ============================================================
-// USER CONFIG — change these before flashing
+// MODE CONFIG
 // ============================================================
-
-#define CALIBRATION_MODE true
-
-const char* WIFI_SSID     = "YourWiFiSSID";
-const char* WIFI_PASSWORD = "YourWiFiPassword";
+#define CALIBRATION_MODE false
+// #define ENABLE_UDP        // UNCOMMENT to enable future UDP broadcast receive
 
 // ============================================================
 // LED MATRIX CONFIG
-// D4 = GPIO4 (confirmed by board silkscreen)
 // ============================================================
-
 #define LED_PIN       4
 #define MATRIX_COLS   32
 #define MATRIX_ROWS   16
-#define NUM_LEDS      (MATRIX_COLS * MATRIX_ROWS)  // 512 (full wall)
+#define NUM_LEDS      (MATRIX_COLS * MATRIX_ROWS)  // 512
 #define LED_TYPE      WS2812B
 #define COLOR_ORDER   GRB
 #define BRIGHTNESS    100
 
+// ============================================================
+// POWER LIMITER — cap total demand at 25A (30A fuse protection)
+// ============================================================
+#define MAX_CURRENT_A  25.0f
+#define LED_CURRENT_MA 20.0f   // per-LED full-brightness current
+
 CRGB leds[NUM_LEDS];
 
 // ============================================================
-// FORWARD DECLARATIONS
+// SERIAL FRAME PROTOCOL
+// magic(2) + len(2 LE) + seq(2 LE) + 512*3 GRB bytes
 // ============================================================
+const uint8_t MAGIC0 = 0xAA;
+const uint8_t MAGIC1 = 0xAA;
+const uint16_t EXPECTED_LEN = 0x0600;  // 1536
+const size_t PAYLOAD_LEN = NUM_LEDS * 3;
+const size_t FRAME_HEADER_LEN = 4;   // LEN(2) + SEQ(2)
+const size_t FRAME_BUF_LEN = FRAME_HEADER_LEN + PAYLOAD_LEN;  // 4 + 1536 = 1540
 
-void connectWiFi();
-void runRainbowSweep();
-void blinkBuiltin();
+static uint8_t rxbuf[FRAME_BUF_LEN];
+static size_t rxlen = 0;
+static bool in_frame = false;
+static uint16_t last_seq = 0;
+static bool have_seq = false;
+// Last byte seen while scanning for magic. File-scope so it can be reset when
+// a frame completes: if it were left at 0xAA (the second magic byte), the
+// leading 0xAA of the NEXT frame would falsely re-trigger sync one byte
+// early, shifting every subsequent frame by one byte.
+static uint8_t scan_prev = 0;
 
 // ============================================================
-// SETUP
+// POWER LIMITER
 // ============================================================
+void applyCurrentLimiter() {
+  float total = 0.0f;
+  for (int i = 0; i < NUM_LEDS; i++) {
+    total += ((float)(leds[i].r + leds[i].g + leds[i].b) / 255.0f) * LED_CURRENT_MA;
+  }
+  total /= 1000.0f;  // mA -> A
+  if (total > MAX_CURRENT_A) {
+    float scale = MAX_CURRENT_A / total;
+    for (int i = 0; i < NUM_LEDS; i++) {
+      leds[i].r = (uint8_t)((float)leds[i].r * scale);
+      leds[i].g = (uint8_t)((float)leds[i].g * scale);
+      leds[i].b = (uint8_t)((float)leds[i].b * scale);
+    }
+  }
+}
 
+// ============================================================
+// SERIAL FRAME HANDLING
+// ============================================================
+void processFrame(const uint8_t* payload, uint16_t seq) {
+  if (have_seq) {
+    // drop stale / out-of-order frames
+    if (seq != (uint16_t)(last_seq + 1)) {
+      // allow only forward jump by 1; otherwise ignore (resync case)
+      Serial.println("drop stale");
+      return;
+    }
+  }
+  last_seq = seq;
+  have_seq = true;
+
+  // Payload is GRB order: [G][R][B] per pixel.
+  // FastLED CRGB stores .r/.g/.b fields.
+  // So: g_byte = payload[i*3+0], r_byte = payload[i*3+1], b_byte = payload[i*3+2].
+  for (int i = 0; i < NUM_LEDS; i++) {
+    leds[i].g = payload[i*3 + 0];
+    leds[i].r = payload[i*3 + 1];
+    leds[i].b = payload[i*3 + 2];
+  }
+  applyCurrentLimiter();
+  FastLED.show();
+}
+
+void handleSerial() {
+  while (Serial.available() > 0) {
+    uint8_t b = Serial.read();
+
+    if (!in_frame) {
+      // look for magic bytes
+      if (scan_prev == MAGIC0 && b == MAGIC1) {
+        in_frame = true;
+        rxlen = 0;
+      }
+      scan_prev = b;
+      continue;
+    }
+
+    // We have magic. Now read LEN (2), SEQ (2), then payload.
+    if (rxlen < 2) {
+      // collecting LEN low byte then high byte; verify == EXPECTED_LEN
+      rxbuf[rxlen] = b;
+      rxlen++;
+      continue;
+    }
+    if (rxlen >= 2 && rxlen < 4) {
+      rxbuf[rxlen] = b;
+      rxlen++;
+      continue;
+    }
+
+    uint16_t seq = ((uint16_t)rxbuf[2]) | (((uint16_t)rxbuf[3]) << 8);
+    // We skip validating LEN for simplicity here (assume EXPECTED_LEN).
+    if (rxlen < 4 + PAYLOAD_LEN) {
+      rxbuf[rxlen] = b;
+      rxlen++;
+      if (rxlen == 4 + PAYLOAD_LEN) {
+        processFrame(&rxbuf[4], seq);
+        in_frame = false;
+        rxlen = 0;
+        scan_prev = 0;  // prevent false magic trigger on next frame's leading 0xAA
+      }
+      continue;
+    }
+    // overflow (shouldn't happen) — resync
+    in_frame = false;
+    rxlen = 0;
+    scan_prev = 0;
+  }
+}
+
+// ============================================================
+// RAINBOW SWEEP (diagnostic)
+// ============================================================
+void runRainbowSweep() {
+  static uint8_t hue = 0;
+  fill_rainbow(leds, NUM_LEDS, hue, 1);
+  FastLED.show();
+  hue++;
+  delay(30);
+}
+
+// ============================================================
+// DORMANT UDP RECEIVE (future broadcast path)
+// ============================================================
+#ifdef ENABLE_UDP
+#include <WiFiUdp.h>
+const char* WIFI_SSID = "YourWiFiSSID";
+const char* WIFI_PASSWORD = "YourWiFiPassword";
+const uint16_t UDP_PORT = 7777;
+WiFiUDP udp;
+
+void connectWiFi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 40) {
+    delay(500);
+    attempts++;
+  }
+  udp.begin(UDP_PORT);
+}
+
+void handleUDP() {
+  int packetSize = udp.parsePacket();
+  if (packetSize == 4 + PAYLOAD_LEN) {
+    uint8_t buf[4 + PAYLOAD_LEN];
+    udp.read(buf, sizeof(buf));
+    uint16_t seq = ((uint16_t)buf[2]) | (((uint16_t)buf[3]) << 8);
+    processFrame(&buf[4], seq);
+  }
+}
+#endif
+
+// ============================================================
+// SETUP / LOOP
+// ============================================================
 void setup() {
   Serial.begin(115200);
-
   delay(500);
-  Serial.println();
-  Serial.println("==================================");
-  Serial.println("  ESP32 LED Matrix Receiver");
-  Serial.println("==================================");
-
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, LOW);
-
   FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS);
   FastLED.setBrightness(BRIGHTNESS);
   FastLED.clear();
   FastLED.show();
 
+#ifdef ENABLE_UDP
+  connectWiFi();
+#endif
   if (CALIBRATION_MODE) {
-    Serial.println("MODE: Calibration — infinite rainbow sweep");
-    Serial.println("Starting in 5 seconds...");
-    for (int i = 5; i > 0; i--) {
-      Serial.print(i);
-      Serial.print("... ");
-      delay(1000);
-    }
-    Serial.println("GO");
+    Serial.println("MODE: Calibration — rainbow sweep");
   } else {
-    Serial.println("MODE: Normal — connecting WiFi");
-    connectWiFi();
+    Serial.println("MODE: USB receive — waiting for frames");
   }
 }
-
-// ============================================================
-// LOOP
-// ============================================================
 
 void loop() {
   if (CALIBRATION_MODE) {
     runRainbowSweep();
     return;
   }
-
-  // Normal mode: blink the onboard LED and report WiFi status
-  blinkBuiltin();
-
-  static unsigned long last_report = 0;
-  unsigned long now = millis();
-  if (now - last_report > 10000) {
-    last_report = now;
-    Serial.print("[heartbeat] WiFi: ");
-    Serial.print(WiFi.status() == WL_CONNECTED ? "connected" : "disconnected");
-    Serial.print(" | RSSI: ");
-    Serial.print(WiFi.RSSI());
-    Serial.print(" dBm | IP: ");
-    Serial.println(WiFi.localIP());
-  }
-}
-
-// ============================================================
-// RAINBOW SWEEP — runs forever, loops back after 255 hues
-// ============================================================
-
-void runRainbowSweep() {
-  static uint8_t hue = 0;
-
-  fill_rainbow(leds, NUM_LEDS, hue, 1);
-  FastLED.show();
-
-  hue++;          // advance hue each frame
-  delay(30);      // ~33 fps, full cycle every ~7.7s
-}
-
-// ============================================================
-// WIFI CONNECTION
-// ============================================================
-
-void connectWiFi() {
-  Serial.print("Connecting to ");
-  Serial.print(WIFI_SSID);
-
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 40) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
-
-    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
-  }
-
-  digitalWrite(LED_BUILTIN, LOW);
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println();
-    Serial.println("WiFi connected!");
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    Serial.println();
-    Serial.println("WiFi FAILED — check SSID/password");
-  }
-}
-
-// ============================================================
-// BUILT-IN LED BLINK (alive indicator, normal mode only)
-// ============================================================
-
-void blinkBuiltin() {
-  static unsigned long last_toggle = 0;
-  static bool state = false;
-  unsigned long now = millis();
-
-  if (now - last_toggle > 500) {
-    last_toggle = now;
-    state = !state;
-    digitalWrite(LED_BUILTIN, state);
-  }
+  handleSerial();
+#ifdef ENABLE_UDP
+  handleUDP();
+#endif
 }
