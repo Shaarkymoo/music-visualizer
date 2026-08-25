@@ -44,10 +44,15 @@ class SerialSink:
             return   # closed/unplugged — skip silently, keep audio running
         data = pack.pack_frame(frame)
         try:
+            # write_timeout=1.0 makes write() block until the full frame is
+            # in the OS buffer (no truncation). We deliberately do NOT call
+            # flush(): flush() forces a drain-to-device round-trip and some
+            # CH340/CP210x drivers block far longer than the real 16.7ms
+            # transmit time, adding jitter. write() alone is enough; the
+            # frame-rate throttle paces the stream.
             written = self.ser.write(data)
             if written != len(data):
                 print(f"WARN: serial write truncated ({written}/{len(data)} bytes)")
-            self.ser.flush()
         except (serial.SerialException, OSError) as e:
             # USB unplug / port gone mid-playback: drop the link but keep the
             # visualizer thread (and audio) alive. Reconnect requires restart.

@@ -193,7 +193,7 @@ class SharedState:
 
 SERIAL_PORT    = None     # None = auto-detect; or e.g. "/dev/ttyUSB0"
 SERIAL_BAUD    = 921600
-SERIAL_MAX_FPS = 40
+SERIAL_MAX_FPS = 25
 
 # Future UDP (unused until broadcast is enabled)
 # UDP_HOST = "192.168.29.212"

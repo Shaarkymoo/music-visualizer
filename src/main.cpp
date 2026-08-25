@@ -47,6 +47,23 @@ static bool have_seq = false;
 // leading 0xAA of the NEXT frame would falsely re-trigger sync one byte
 // early, shifting every subsequent frame by one byte.
 static uint8_t scan_prev = 0;
+// Timestamp of the last byte read, for the frame-assembly timeout. If a byte
+// is lost mid-frame (RX overflow), rxlen stalls; after FRAME_TIMEOUT_MS of
+// silence we resync instead of staying stuck. A full frame takes ~17ms at
+// 921600, so 50ms is a safe "this frame is dead" threshold.
+static uint32_t last_byte_ms = 0;
+const uint32_t FRAME_TIMEOUT_MS = 50;
+// Set by processFrame() when a complete frame has been written into leds[].
+// loop() clears it after calling FastLED.show() — so showing happens at the
+// loop rate, never inside the serial drain (which must not block).
+static bool frame_ready = false;
+
+// ---- diagnostics ----
+static uint32_t diag_frames_rx = 0;     // complete frames parsed
+static uint32_t diag_frames_stale = 0;  // seq-gate drops
+static uint32_t diag_len_resync = 0;    // LEN-validation resyncs
+static uint32_t diag_shows = 0;         // FastLED.show() calls
+static uint32_t diag_last_show_us = 0;  // last show() duration, microseconds
 
 // ============================================================
 // POWER LIMITER
@@ -78,12 +95,13 @@ void processFrame(const uint8_t* payload, uint16_t seq) {
     bool ok = (seq == expected) || (seq == 0) || ((seq > last_seq) && ((uint16_t)(seq - last_seq) <= 8));
     if (!ok) {
       // genuinely stale / out-of-order — drop
-      Serial.println("drop stale");
+      diag_frames_stale++;
       return;
     }
   }
   last_seq = seq;
   have_seq = true;
+  diag_frames_rx++;
 
   // Payload is GRB order: [G][R][B] per pixel.
   // FastLED CRGB stores .r/.g/.b fields.
@@ -94,13 +112,30 @@ void processFrame(const uint8_t* payload, uint16_t seq) {
     leds[i].b = payload[i*3 + 2];
   }
   applyCurrentLimiter();
-  FastLED.show();
+  // NOTE: FastLED.show() is deliberately NOT called here. Showing inside the
+  // serial drain loop blocks for ~15-30ms (512 LEDs), which stalls the drain,
+  // overflows the RX buffer under continuous frames, corrupts frames, and
+  // desyncs the receiver. loop() calls show() once per iteration instead,
+  // so the drain never blocks on the LED update.
+  frame_ready = true;
 }
 
 bool handleSerial() {
   bool read_any = false;
+  // Frame-assembly timeout: if we're mid-frame but no byte arrives for longer
+  // than a full frame period, a byte was lost (RX overflow) and rxlen will
+  // never reach the expected length — the parser would otherwise stay stuck
+  // in-frame forever, consuming the next frames' bytes as payload and
+  // desyncing permanently. Resync instead (UDP-style: drop the broken frame).
+  if (in_frame && (millis() - last_byte_ms > FRAME_TIMEOUT_MS)) {
+    in_frame = false;
+    rxlen = 0;
+    scan_prev = 0;
+    diag_len_resync++;
+  }
   while (Serial.available() > 0) {
     read_any = true;
+    last_byte_ms = millis();
     uint8_t b = Serial.read();
 
     if (!in_frame) {
@@ -126,6 +161,7 @@ bool handleSerial() {
         uint16_t len = ((uint16_t)rxbuf[0]) | (((uint16_t)rxbuf[1]) << 8);
         if (len != EXPECTED_LEN) {
           // bad frame header — resync
+          diag_len_resync++;
           in_frame = false;
           rxlen = 0;
           scan_prev = 0;
@@ -146,6 +182,11 @@ bool handleSerial() {
         in_frame = false;
         rxlen = 0;
         scan_prev = 0;  // prevent false magic trigger on next frame's leading 0xAA
+        // Return immediately so loop() runs FastLED.show() for this frame.
+        // If we kept draining here, continuous streaming would keep the
+        // buffer non-empty and show() would starve (frames parsed but never
+        // displayed). Remaining bytes stay buffered for the next iteration.
+        return true;
       }
       continue;
     }
@@ -282,6 +323,29 @@ void loop() {
   }
   if (!handleSerial()) {
     vTaskDelay(1);   // no bytes — yield so the Arduino idle task can run
+  }
+  if (frame_ready) {
+    frame_ready = false;
+    uint32_t t0 = micros();
+    FastLED.show();
+    diag_last_show_us = micros() - t0;
+    diag_shows++;
+  }
+  // periodic diagnostics (every ~2s)
+  static uint32_t last_diag = 0;
+  uint32_t now_ms = millis();
+  if (now_ms - last_diag >= 2000) {
+    last_diag = now_ms;
+    Serial.print("[diag] rx=");
+    Serial.print(diag_frames_rx);
+    Serial.print(" stale=");
+    Serial.print(diag_frames_stale);
+    Serial.print(" resync=");
+    Serial.print(diag_len_resync);
+    Serial.print(" shows=");
+    Serial.print(diag_shows);
+    Serial.print(" show_us=");
+    Serial.println(diag_last_show_us);
   }
 #ifdef ENABLE_UDP
   handleUDP();

@@ -64,6 +64,13 @@ class AudioProcessor:
         if self.audio is None:
             return None
 
+        # Guard against pygame.mixer.music.get_pos() returning -1 (music
+        # not yet playing / stalled). A negative position would slice the
+        # audio array backward -> empty chunk -> FFT crash -> visualizer
+        # thread dies silently -> frozen wall.
+        if playback_ms is None or playback_ms < 0:
+            return None
+
         sample_pos    = int((playback_ms / 1000.0) * self.sample_rate)
         self.position = sample_pos
 

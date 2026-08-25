@@ -56,6 +56,13 @@ def run_visualizer(state: SharedState, sink=None):
     is_paused = False
     duration_s = 0.0
 
+    # Pace the whole loop to the serial send rate. We only send at
+    # SERIAL_MAX_FPS anyway; polling audio/FFT 8x faster than that just
+    # wastes CPU and adds jitter (the ESP32 can only display ~25-30fps —
+    # WS2812 bit timing alone is 15ms/show). Sleep a full frame period.
+    import config as _config
+    frame_period_ms = max(5, int(1000.0 / _config.SERIAL_MAX_FPS))
+
     while True:
         # ---- Drain commands from player.py ----
         cmds = state.drain_commands()
@@ -122,4 +129,4 @@ def run_visualizer(state: SharedState, sink=None):
             sink.send_frame(frame)
 
         import pygame
-        pygame.time.delay(5)   # small yield; keeps loop from hammering CPU
+        pygame.time.delay(frame_period_ms)   # pace to the serial send rate
