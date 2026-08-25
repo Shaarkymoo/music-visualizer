@@ -18,7 +18,7 @@ Run:  cd python && ../.venv/bin/python chase_test.py
 
 import sys
 import time
-import config
+import settings
 import serial_sink
 import pack
 
@@ -51,8 +51,8 @@ def build_chunk_physical(chunk: int):
 
 def main():
     sink = serial_sink.SerialSink(
-        port=config.SERIAL_PORT,
-        baud=config.SERIAL_BAUD,
+        port=settings.SERIAL_PORT,
+        baud=settings.SERIAL_BAUD,
         max_fps=100,  # don't throttle the chase
     )
     try:

@@ -2,11 +2,11 @@
 pipeline_test.py — Headless end-to-end verification of the Python pipeline.
 
 Exercises the full chain WITHOUT hardware or a display:
-  libproc.AudioProcessor (FFT) -> visualizer.RGBFrameBuilder -> pack.pack_frame
+  libproc.AudioProcessor (FFT) -> render.Renderer -> pack.pack_frame
 
 Verifies:
   1. Audio loads and FFT produces 32 band values
-  2. Frames build at 16x32 with valid 0-255 RGB tuples
+  2. Frames build at 16x32 with valid 0-255 RGB values
   3. Packing produces correct 1542-byte frames (header + GRB payload)
   4. The sweep tone actually drives the bands (bass vs treble response)
   5. Serialization is deterministic for identical frames, and seq advances
@@ -20,9 +20,10 @@ import os
 import wave
 import tempfile
 import numpy as np
-import config
+import soundfile as sf
+import settings as S
 from libproc import AudioProcessor
-from visualizer import RGBFrameBuilder
+from render import Renderer
 import pack
 
 
@@ -63,12 +64,13 @@ def main():
 
 
 def run_checks(AUDIO):
-    state = config.SharedState()
-    proc = AudioProcessor(cfg=state)
-    builder = RGBFrameBuilder(cfg=state)
+    proc = AudioProcessor()
+    renderer = Renderer()
 
-    # ---- 1. Load + FFT ----
-    proc.load(AUDIO)
+    # ---- 1. Load + FFT (decode via soundfile, same path as headless.py) --
+    samples, sr = sf.read(AUDIO, dtype="float32")
+    mono = samples.mean(axis=1) if samples.ndim > 1 else samples
+    proc.load_array(mono.astype(np.float32), sr, S.BANDS)
     check("audio loaded", proc.audio is not None and proc.sample_rate == 22050,
           f"(sr={proc.sample_rate})")
     check("total samples", proc.total_samples == 22050 * 5,
@@ -96,15 +98,14 @@ def run_checks(AUDIO):
           f"(bass={bass_late:.3f} treble={treb_late:.3f})")
 
     # ---- 4. Frame build ----
-    frame = builder.build(bands_early)
-    check("frame is 16x32", len(frame) == 16 and all(len(r) == 32 for r in frame),
-          f"({len(frame)}x{len(frame[0])})")
-    flat = [c for row in frame for c in row]
+    frame = renderer.build(bands_early)     # (16, 32, 3) uint8 RGB
+    check("frame is 16x32x3 uint8",
+          frame.shape == (16, 32, 3) and frame.dtype == np.uint8,
+          f"({frame.shape}, {frame.dtype})")
+    flat = [p for row in frame for p in row]
     check("512 pixels", len(flat) == 512, f"({len(flat)})")
-    check("all RGB in 0-255", all(0 <= ch <= 255 for p in flat for ch in p),
-          f"(min={min(ch for p in flat for ch in p)}, "
-          f"max={max(ch for p in flat for ch in p)})")
-    nonblack = sum(1 for p in flat if p != (0, 0, 0))
+    check("all RGB in 0-255", bool((frame >= 0).all() and (frame <= 255).all()))
+    nonblack = sum(1 for p in flat if p.any())
     check("EQ bars visible (non-black pixels)", nonblack > 64,
           f"({nonblack} lit)")
 
