@@ -6,6 +6,7 @@
 #define CALIBRATION_MODE false
 #define MAP_TEST_MODE false
 // #define ENABLE_UDP        // UNCOMMENT to enable future UDP broadcast receive
+// #define SERIAL_DIAGNOSTICS   // UNCOMMENT to print "[diag] rx= stale= ..." every 2s
 
 // ============================================================
 // LED MATRIX CONFIG
@@ -332,6 +333,7 @@ void loop() {
     diag_shows++;
   }
   // periodic diagnostics (every ~2s)
+#ifdef SERIAL_DIAGNOSTICS
   static uint32_t last_diag = 0;
   uint32_t now_ms = millis();
   if (now_ms - last_diag >= 2000) {
@@ -347,6 +349,7 @@ void loop() {
     Serial.print(" show_us=");
     Serial.println(diag_last_show_us);
   }
+#endif
 #ifdef ENABLE_UDP
   handleUDP();
 #endif
