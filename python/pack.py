@@ -1,8 +1,10 @@
-MAGIC = b"\xaa\xaa"
-FRAME_LEN = 0x0600          # 1536 payload bytes
-NUM_LEDS = 512
-GRID_COLS = 32
-GRID_ROWS = 16
+import settings as S
+
+MAGIC = S.MAGIC
+FRAME_LEN = S.FRAME_LEN      # 1536 payload bytes
+NUM_LEDS = S.NUM_LEDS
+GRID_COLS = S.GRID_COLS
+GRID_ROWS = S.GRID_ROWS
 
 # ============================================================
 # PHYSICAL BOARD LAYOUT
@@ -33,22 +35,11 @@ GRID_ROWS = 16
 # The remaining positions are filled from the chase test.
 # ============================================================
 
-CHUNK_BOARD_POS = [
-    # chunk : (board_col, board_row)
-    # CONFIRMED by chase test (2026-08-24): lighting order was
-    # 5,1,6,2,7,3,8,4 with boards numbered 1-8 left-to-right,
-    # top-to-bottom. board_row 0 = top, board_col 0 = left.
-    (0, 1),   # 0 = board 5 = bottom-left
-    (0, 0),   # 1 = board 1 = top-left
-    (1, 1),   # 2 = board 6 = bottom-mid-left
-    (1, 0),   # 3 = board 2 = top-mid-left
-    (2, 1),   # 4 = board 7 = bottom-mid-right
-    (2, 0),   # 5 = board 3 = top-mid-right
-    (3, 1),   # 6 = board 8 = bottom-right
-    (3, 0),   # 7 = board 4 = top-right
-]
+# Values live in settings.py (single source of truth — see
+# docs/superpowers/plans/2026-08-25-headless-rewrite.md).
 
-ALL_BOARDS_ROTATED_180 = True
+CHUNK_BOARD_POS = S.CHUNK_BOARD_POS
+ALL_BOARDS_ROTATED_180 = S.ALL_BOARDS_ROTATED_180
 
 # HARDWARE QUIRK (not a remap issue): physical LED 0 (chunk 0's first LED,
 # the very first LED in the chain) has a stuck-green channel on this build.
