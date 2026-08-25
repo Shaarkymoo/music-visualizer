@@ -264,6 +264,11 @@ void setup() {
   } else {
     Serial.println("MODE: USB receive — waiting for frames");
   }
+  // Boot banner for confirming the firmware build: baud must match the
+  // Python side (config.SERIAL_BAUD). Mismatch = garbage + "drop stale".
+  Serial.print("BAUD: ");
+  Serial.println(921600);
+  Serial.println("READY");
 }
 
 void loop() {
