@@ -1,3 +1,4 @@
+import numpy as np
 import settings as S
 
 MAGIC = S.MAGIC
@@ -70,6 +71,7 @@ def build_remap():
 
 
 REMAP = build_remap()
+REMAP_IDX = np.asarray(REMAP)   # fancy-index view for the numpy pack path
 
 _seq = 0
 
@@ -87,20 +89,17 @@ def reset_seq():
 
 
 def pack_frame(frame):
-    """frame: 16x32 list-of-lists of (r, g, b) tuples. Returns 1542-byte packet."""
+    """frame: 16x32 array-like of (r, g, b) per pixel. Returns 1542-byte packet.
+
+    Array-native path (numpy): REMAP as fancy indexing on the flattened
+    (512, 3) array, channel axis reordered to GRB, one .tobytes() —
+    byte-identical to the old scalar loop (guarded by test_pack.py).
+    """
     global _seq
-    flat = []
-    for row in range(GRID_ROWS):
-        for col in range(GRID_COLS):
-            r, g, b = frame[row][col]
-            flat.append((r, g, b))
-    # apply physical remap
-    remapped = [flat[REMAP[i]] for i in range(NUM_LEDS)]
-    # build GRB payload
-    payload = bytearray()
-    for (r, g, b) in remapped:
-        payload += bytes((g, r, b))
+    arr = np.asarray(frame, dtype=np.uint8).reshape(NUM_LEDS, 3)
+    grb = arr[REMAP_IDX][:, [1, 0, 2]]          # remap physical order, then R/G/B -> G/R/B
+    payload = grb.tobytes()
     seq = _seq
     _seq = (_seq + 1) % 65536
     header = MAGIC + FRAME_LEN.to_bytes(2, "little") + seq.to_bytes(2, "little")
-    return header + bytes(payload)
+    return header + payload

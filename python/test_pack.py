@@ -82,3 +82,33 @@ def test_reset_seq_forces_host_restart():
     d2 = pack.pack_frame([[ (0,0,0) ]*pack.GRID_COLS for _ in range(pack.GRID_ROWS)])
     s2 = int.from_bytes(d2[4:6], "little")
     assert s2 == 1                        # continues normally after resync
+
+def _scalar_reference_pack(frame):
+    """Byte-exact transcription of the pre-vectorization pack_frame
+    (v1-working..b192b92 era) — guards the numpy rewrite against drift."""
+    flat = []
+    for row in range(pack.GRID_ROWS):
+        for col in range(pack.GRID_COLS):
+            r, g, b = frame[row][col]
+            flat.append((r, g, b))
+    remapped = [flat[pack.REMAP[i]] for i in range(pack.NUM_LEDS)]
+    payload = bytearray()
+    for (r, g, b) in remapped:
+        payload += bytes((g, r, b))
+    header = pack.MAGIC + pack.FRAME_LEN.to_bytes(2, "little") + b"\x00\x00"
+    return bytes(header) + bytes(payload)   # seq zeroed for comparison
+
+
+def test_vectorized_pack_matches_scalar_reference():
+    import numpy as np
+    rng = np.random.default_rng(123)
+    arr = rng.integers(0, 256, size=(pack.GRID_ROWS, pack.GRID_COLS, 3), dtype=np.uint8)
+    frame_list = [[tuple(int(c) for c in arr[r, c]) for c in range(pack.GRID_COLS)]
+                  for r in range(pack.GRID_ROWS)]
+    got = pack.pack_frame(frame_list)
+    ref = _scalar_reference_pack(frame_list)
+    assert len(got) == 1542
+    # byte-identical except the SEQ field ([4:6]), which is pack_frame's
+    # live counter — compare magic+LEN and the full GRB payload
+    assert got[:4] == ref[:4]
+    assert got[6:] == ref[6:]
