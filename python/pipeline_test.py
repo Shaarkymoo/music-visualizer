@@ -16,13 +16,32 @@ Exit 0 = all checks pass.
 """
 
 import sys
+import os
+import wave
+import tempfile
 import numpy as np
 import config
 from libproc import AudioProcessor
 from visualizer import RGBFrameBuilder
 import pack
 
-AUDIO = "/tmp/opencode/sweep.wav"  # 200Hz -> 2.2kHz proper linear chirp, 5s, 22050Hz mono
+
+def make_chirp_wav(path):
+    """Generate a 200Hz -> 2.2kHz proper linear chirp (phase-integrated),
+    5s, 22050Hz mono, so the test is fully self-contained."""
+    sr = 22050
+    dur = 5.0
+    t = np.arange(int(sr * dur)) / sr
+    f0, f1 = 200.0, 2200.0
+    k = (f1 - f0) / dur
+    phase = 2 * np.pi * (f0 * t + 0.5 * k * t * t)
+    audio = 0.5 * np.sin(phase).astype(np.float32)
+    w = wave.open(path, "wb")
+    w.setnchannels(1)
+    w.setsampwidth(2)
+    w.setframerate(sr)
+    w.writeframes((audio * 32767).astype(np.int16).tobytes())
+    w.close()
 
 
 def check(name, cond, detail=""):
@@ -33,6 +52,17 @@ def check(name, cond, detail=""):
 
 
 def main():
+    # Self-contained test audio (cleaned up automatically).
+    fd, audio_path = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    try:
+        make_chirp_wav(audio_path)
+        run_checks(audio_path)
+    finally:
+        os.unlink(audio_path)
+
+
+def run_checks(AUDIO):
     state = config.SharedState()
     proc = AudioProcessor(cfg=state)
     builder = RGBFrameBuilder(cfg=state)
