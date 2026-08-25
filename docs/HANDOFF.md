@@ -1,0 +1,191 @@
+# HANDOFF — Music Visualizer (512-LED Wall)
+
+> Anchor doc for resuming work in a fresh session. Everything needed to
+> understand, run, debug, and continue this project. Last verified working
+> state: tag **`v1-working`** (commit `be3c1a7`).
+
+---
+
+## 1. What this is
+
+An EQ music visualizer driving a wall of **512 WS2812B LEDs** (8 panels of 8×8,
+arranged **4 columns × 2 rows** = 32 cols × 16 rows).
+
+- **Music plays on the PC** through headphones/ speakers.
+- The PC does ALL analysis: decodes the mp3, FFTs it into 32 frequency bands,
+  builds a 16×32 RGB frame, packs it, and streams it over USB serial.
+- The ESP32 is a **dumb display**: receives 1542-byte frames over USB serial,
+  applies a 25A current limiter, and drives the LEDs via FastLED.
+
+```
+PC (python/)                                ESP32 (src/main.cpp)
+┌──────────────────────────┐   USB 921600   ┌─────────────────────────┐
+│ mp3 → librosa decode     │ ─────────────► │ UART RX (4096B buffer)  │
+│ → numpy FFT (32 bands)   │  1542 B/frame  │ → magic/LEN/SEQ parse   │
+│ → HSV frame build        │  @25 fps       │ → 25A current limiter   │
+│ → pack (GRB + REMAP)     │ ◄───────────── │ → FastLED.show()        │
+└──────────────────────────┘  diag lines    │   (15.86ms for 512 LED) │
+                                            └───────────┬─────────────┘
+                                                   GPIO4 → level shifter
+                                                        → 8× WS2812B boards
+```
+
+## 2. Verified working state
+
+Confirmed by the user watching the wall: **smooth, synced rendering with real
+music, zero corruption** (`[diag] rx≈sent, stale=0, resync=0`).
+
+| Component | State |
+|---|---|
+| Firmware (`src/main.cpp`) | ✅ flashed & verified — boot banner `MODE: USB receive / BAUD: 921600 / READY` |
+| Python app (`python/player.py`) | ✅ runs, plays audio, renders live to wall |
+| Panel remap | ✅ confirmed by chase test — see §5 |
+| Tests | ✅ 7/7 `test_pack.py`, 16/16 `pipeline_test.py` |
+
+**Tag `v1-working` = revert-to point if anything below breaks it.**
+
+## 3. Key numbers (memorize these)
+
+| Quantity | Value | Why it matters |
+|---|---|---|
+| `FastLED.show()` | **15.86 ms** | Hardware floor: 512×24 bits × 1.25 µs. Cannot be improved in code. |
+| Frame on wire | **16.7 ms** | 1542 bytes × 10 bits ÷ 921600 baud |
+| **Frame ceiling** | **~31 fps** | receive + show are serialized; 32+ fps ⇒ RX overflow ⇒ corruption |
+| Current cap | 25 fps | `config.py: SERIAL_MAX_FPS` — safe margin below ceiling |
+| Serial baud | 921600 | must match on both sides; firmware prints it at boot |
+| ESP32 UART RX buffer | 4096 B | `setRxBufferSize(4096)` before `begin()`; default 256 B overflows instantly |
+| Frame size | 1542 B | magic 2 + LEN 2 + SEQ 2 + payload 512×3 |
+| Frame timeout | 50 ms | firmware resyncs if mid-frame silence exceeds this |
+| 25 A limiter | Σ((R+G+B)/255)×20 mA per pixel; scale all if > 25 A | protects 30 A fuse (max possible draw 30.7 A) |
+
+## 4. Hardware facts
+
+- **Data pin:** GPIO4 (D4, confirmed by silkscreen) → SN74AHCT125N level shifter → first board DIN.
+- **Color order:** GRB (FastLED `COLOR_ORDER GRB`; payload bytes are `[G][R][B]` per pixel).
+- **Level shifter:** OE pins (1,4,10,13) tied GND (active-low); unused inputs grounded.
+- **Power:** Mean Well LRS-350-5 (5 V 60 A), 1000 µF caps installed at output.
+  Fusing: 10 A per LED branch, 30 A total line (protected by the 25 A limiter).
+- **Board quirk:** physical LED 0 (first in chain, lives on bottom-left board)
+  has a stuck green channel — shows yellow when fed red, faint green when dark.
+  Cosmetic, ignore.
+
+### Panel map (confirmed by chase test)
+
+Boards numbered 1–8 left→right, top row then bottom row.
+Chain order (chunk c → board): **5, 1, 6, 2, 7, 3, 8, 4**.
+Every board is mounted **rotated 180°**.
+
+```python
+CHUNK_BOARD_POS = [   # chunk : (board_col, board_row)
+    (0, 1),           # 0 = board 5 = bottom-left
+    (0, 0),           # 1 = board 1 = top-left
+    (1, 1),           # 2 = board 6 = bottom-mid-left
+    (1, 0),           # 3 = board 2 = top-mid-left
+    (2, 1),           # 4 = board 7 = bottom-mid-right
+    (2, 0),           # 5 = board 3 = top-mid-right
+    (3, 1),           # 6 = board 8 = bottom-right
+    (3, 0),           # 7 = board 4 = top-right
+]
+# All boards rotated 180°: local (lr,lc) appears at physical (7-lr, 7-lc).
+# Encoded in python/pack.py -> build_remap() -> REMAP.
+```
+
+## 5. File map (current architecture)
+
+```
+src/main.cpp            ESP32 firmware (C++/Arduino/FastLED 3.10.3 via PlatformIO)
+python/
+├── player.py           ENTRY POINT — tkinter panel + starts visualizer thread
+├── visualizer.py       pygame.mixer playback + FFT loop + RGBFrameBuilder
+├── libproc.py          AudioProcessor: librosa decode + 32-band FFT
+├── config.py           SharedState (thread-safe) + DEFAULT_BANDS + serial config
+├── pack.py             pack_frame(): header + GRB payload + REMAP
+├── serial_sink.py      SerialSink: pyserial writer (throttled, graceful-fail)
+├── udp_sink.py         DORMANT future UDP path (not imported anywhere)
+├── chase_test.py       hardware diagnostic: white chunk chase w/ red marker
+├── pipeline_test.py    headless end-to-end verification (self-contained)
+└── test_pack.py        7 unit tests (protocol, remap bijection, roundtrip)
+docs/
+├── PARTS.md, hardware-notes.md, notes.txt, dimensions.xlsx, pinout png
+└── superpowers/{specs,plans}/   design docs (see git history)
+```
+
+## 6. How to run / build / debug
+
+```bash
+# Flash firmware (from repo root)
+pio run --project-dir . -t upload
+
+# Run the player (needs display :1 + audio device)
+cd python && ../.venv/bin/python player.py
+
+# Headless end-to-end verification (no hardware needed)
+cd python && ../.venv/bin/python pipeline_test.py
+
+# Unit tests
+cd python && ../.venv/bin/python -m pytest test_pack.py -q
+
+# Read ESP32 boot banner / diagnostics (after flashing or reset)
+cd python && ../.venv/bin/python -c "
+import serial, time
+ser = serial.Serial('/dev/ttyUSB0', 921600, timeout=1)
+ser.setDTR(False); ser.setRTS(True); time.sleep(0.1); ser.setRTS(False)
+time.sleep(0.5); print(ser.read(400).decode(errors='replace')); ser.close()"
+```
+
+**Diagnostics:** firmware prints `[diag] rx=N stale=N resync=N shows=N show_us=N`
+every 2 s — but it's gated behind `#define SERIAL_DIAGNOSTICS` (currently OFF in
+committed source; uncomment + re-flash to enable). Rising `stale`/`resync` =
+wire corruption; flat counts with bad visuals = upstream content problem.
+
+**Hardware diagnostic:** `chase_test.py` lights each 8×8 board white in chain
+order (red marker = first LED of the chunk). Confirms chain order + rotation.
+
+## 7. Wire protocol (must stay in sync both sides)
+
+```
+MAGIC (0xAA 0xAA) | LEN u16 LE (=0x0600) | SEQ u16 LE | 512×3 GRB bytes
+```
+- Total 1542 bytes. SEQ increments per frame, wraps mod 65536.
+- ESP32 accepts: exact next seq, `seq==0` (host restart), forward jump ≤8.
+  Anything else dropped silently.
+- LEN validated ≠ 0x0600 → resync. Mid-frame silence > 50 ms → resync.
+
+## 8. Debug history (what we fixed and why — short index)
+
+Full detail in git log; the lessons that matter:
+
+1. **`show()` inside the serial drain starved display** — rx climbed, shows
+   stuck at 2. Fix: `processFrame()` only sets `frame_ready`; `loop()` shows.
+   Never call blocking show() inside a drain loop.
+2. **No recovery from mid-frame byte loss** — parser stayed in-frame forever.
+   Fix: 50 ms assembly timeout → resync. (UDP-style: drop broken frames.)
+3. **256-byte default UART RX buffer** overflowed during show(). Fix:
+   `setRxBufferSize(4096)` before `begin()`.
+4. **Non-blocking writes truncated frames.** Fix: `write_timeout=1.0`
+   (blocking writes). Later removed `flush()` (driver-dependent latency).
+5. **`get_pos()` returns −1 when not playing** → negative slice → FFT crash →
+   silent daemon-thread death. Guard in `get_frame_at`.
+6. **Chase/map tests froze after one chunk** — test tool sent constant seq=0;
+   firmware gate rejected everything after the first. Test tools must
+   increment seq too.
+7. **Auto-advance race** fixed in `_tick` (was firing on transient
+   `get_busy()==False`).
+
+## 9. Known limits & quirks
+
+- ~31 fps hard ceiling (§3). 25 fps chosen for margin. Don't raise without
+  overlapping receive+show (double-buffering + FastLED async RMT).
+- Board 5 first-LED color quirk (§4).
+- `udp_sink.py` is written but dormant; firmware UDP path behind
+  `ENABLE_UDP`, also dormant. Enabling requires fixing the UDP handler
+  (packet-size check expects 1540, should be 1542; header offset wrong) —
+  noted in review, never exercised.
+- `dimensions.xlsx` is an old density-comparison sheet, NOT panel order data.
+
+## 10. What's next
+
+See **`docs/superpowers/plans/2026-08-25-headless-rewrite.md`**: approved plan
+to replace pygame/tkinter with a minimal sounddevice+numpy headless stack,
+vectorized rendering, and one unified settings file (`python/settings.py`).
+Revert point if that rewrite breaks anything: `git checkout v1-working`.
