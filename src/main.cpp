@@ -6,7 +6,7 @@
 #define CALIBRATION_MODE false
 #define MAP_TEST_MODE false
 // #define ENABLE_UDP        // UNCOMMENT to enable future UDP broadcast receive
-// #define SERIAL_DIAGNOSTICS   // UNCOMMENT to print "[diag] rx= stale= ..." every 2s
+#define SERIAL_DIAGNOSTICS   // UNCOMMENT to print "[diag] rx= stale= ..." every 2s
 
 // ============================================================
 // LED MATRIX CONFIG
