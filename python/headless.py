@@ -60,27 +60,24 @@ def play_folder(playlist, sink, fps):
     renderer = Renderer()
     smoothed = np.zeros(len(S.BANDS))
 
-    try:
-        for path in playlist:
-            print('playing:', os.path.basename(path))
-            try:
-                samples, sr = decode(path)
-            except Exception as e:
-                print(f'WARN: cannot decode {path} ({e}) — skipping')
-                continue
-            mono = samples.mean(axis=1) if samples.ndim > 1 else samples
-            mono = mono.astype(np.float32)
+    for path in playlist:
+        print('playing:', os.path.basename(path))
+        try:
+            samples, sr = decode(path)
+        except Exception as e:
+            print(f'WARN: cannot decode {path} ({e}) — skipping')
+            continue
+        mono = samples.mean(axis=1) if samples.ndim > 1 else samples
+        mono = mono.astype(np.float32)
 
-            processor.load_array(mono, sr, S.BANDS)
-            player = AudioPlayer(mono, sr)
-            player.play()
-            try:
-                smoothed = render_loop(player, processor, renderer,
-                                       smoothed, sink, fps)
-            finally:
-                player.stop()
-    except KeyboardInterrupt:
-        print('\nstopped')
+        processor.load_array(mono, sr, S.BANDS)
+        player = AudioPlayer(mono, sr)
+        player.play()
+        try:
+            smoothed = render_loop(player, processor, renderer,
+                                   smoothed, sink, fps)
+        finally:
+            player.stop()
 
 
 def main():
@@ -103,6 +100,8 @@ def main():
     try:
         while True:                          # folder loops forever
             play_folder(playlist, sink, args.fps)
+    except KeyboardInterrupt:
+        print('\nstopped')
     finally:
         sink.close()
 

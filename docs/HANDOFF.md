@@ -20,9 +20,9 @@ arranged **4 columns × 2 rows** = 32 cols × 16 rows).
 ```
 PC (python/)                                ESP32 (src/main.cpp)
 ┌──────────────────────────┐   USB 921600   ┌─────────────────────────┐
-│ mp3 → librosa decode     │ ─────────────► │ UART RX (4096B buffer)  │
+│ soundfile decode         │ ─────────────► │ UART RX (4096B buffer)  │
 │ → numpy FFT (32 bands)   │  1542 B/frame  │ → magic/LEN/SEQ parse   │
-│ → HSV frame build        │  @25 fps       │ → 25A current limiter   │
+│ → vectorized HSV frame   │  @25 fps       │ → 25A current limiter   │
 │ → pack (GRB + REMAP)     │ ◄───────────── │ → FastLED.show()        │
 └──────────────────────────┘  diag lines    │   (15.86ms for 512 LED) │
                                             └───────────┬─────────────┘
@@ -32,17 +32,19 @@ PC (python/)                                ESP32 (src/main.cpp)
 
 ## 2. Verified working state
 
-Confirmed by the user watching the wall: **smooth, synced rendering with real
-music, zero corruption** (`[diag] rx≈sent, stale=0, resync=0`).
+**v1 (pygame/tkinter stack):** user-confirmed smooth/synced/zero-corruption.
+Tag **`v1-working`** (`be3c1a7`) preserved as revert point.
+
+**v2 (headless rewrite, 2026-08-25):** code complete and verified headlessly
+(imports, 12/12 unit tests, pipeline checks, pio build). Hardware acceptance
+(wall rendering ≥2 min, diag counters) pending — see §10.
 
 | Component | State |
 |---|---|
-| Firmware (`src/main.cpp`) | ✅ flashed & verified — boot banner `MODE: USB receive / BAUD: 921600 / READY` |
-| Python app (`python/player.py`) | ✅ runs, plays audio, renders live to wall |
+| Firmware (`src/main.cpp`) | ✅ flashed & verified — boot banner `MODE: USB receive / BAUD: 921600 / READY` (unchanged by v2) |
+| Python app (`python/headless.py`) | ✅ v2 entry point — hardware smoke test pending |
 | Panel remap | ✅ confirmed by chase test — see §5 |
-| Tests | ✅ 7/7 `test_pack.py`, 16/16 `pipeline_test.py` |
-
-**Tag `v1-working` = revert-to point if anything below breaks it.**
+| Tests | ✅ 7/7 `test_pack.py`, 2/2 `test_render.py`, 3/3 `test_audio.py`, pipeline PASS |
 
 ## 3. Key numbers (memorize these)
 
@@ -51,7 +53,7 @@ music, zero corruption** (`[diag] rx≈sent, stale=0, resync=0`).
 | `FastLED.show()` | **15.86 ms** | Hardware floor: 512×24 bits × 1.25 µs. Cannot be improved in code. |
 | Frame on wire | **16.7 ms** | 1542 bytes × 10 bits ÷ 921600 baud |
 | **Frame ceiling** | **~31 fps** | receive + show are serialized; 32+ fps ⇒ RX overflow ⇒ corruption |
-| Current cap | 25 fps | `config.py: SERIAL_MAX_FPS` — safe margin below ceiling |
+| Current cap | 25 fps | `settings.py: SERIAL_MAX_FPS` — safe margin below ceiling |
 | Serial baud | 921600 | must match on both sides; firmware prints it at boot |
 | ESP32 UART RX buffer | 4096 B | `setRxBufferSize(4096)` before `begin()`; default 256 B overflows instantly |
 | Frame size | 1542 B | magic 2 + LEN 2 + SEQ 2 + payload 512×3 |
@@ -95,16 +97,19 @@ CHUNK_BOARD_POS = [   # chunk : (board_col, board_row)
 ```
 src/main.cpp            ESP32 firmware (C++/Arduino/FastLED 3.10.3 via PlatformIO)
 python/
-├── player.py           ENTRY POINT — tkinter panel + starts visualizer thread
-├── visualizer.py       pygame.mixer playback + FFT loop + RGBFrameBuilder
-├── libproc.py          AudioProcessor: librosa decode + 32-band FFT
-├── config.py           SharedState (thread-safe) + DEFAULT_BANDS + serial config
-├── pack.py             pack_frame(): header + GRB payload + REMAP
+├── headless.py         ENTRY POINT — folder loop: play → FFT → render → serial
+├── settings.py         every tunable in one file (geometry, protocol, bands, colors)
+├── audio.py            AudioPlayer: sounddevice playback, exact sample position
+├── libproc.py          AudioProcessor: 32-band FFT from pre-decoded samples
+├── render.py           Renderer: numpy-vectorized HSV frame build (16x32 RGB)
+├── pack.py             pack_frame(): header + GRB payload + REMAP (values from settings)
 ├── serial_sink.py      SerialSink: pyserial writer (throttled, graceful-fail)
 ├── udp_sink.py         DORMANT future UDP path (not imported anywhere)
 ├── chase_test.py       hardware diagnostic: white chunk chase w/ red marker
 ├── pipeline_test.py    headless end-to-end verification (self-contained)
-└── test_pack.py        7 unit tests (protocol, remap bijection, roundtrip)
+├── test_pack.py        7 unit tests (protocol, remap bijection, roundtrip)
+├── test_render.py      golden test vs scalar reference (bit-exact)
+└── test_audio.py       position math + end-of-stream regression tests
 docs/
 ├── PARTS.md, hardware-notes.md, notes.txt, dimensions.xlsx, pinout png
 └── superpowers/{specs,plans}/   design docs (see git history)
@@ -116,14 +121,14 @@ docs/
 # Flash firmware (from repo root)
 pio run --project-dir . -t upload
 
-# Run the player (needs display :1 + audio device)
-cd python && ../.venv/bin/python player.py
+# Run the player (folder loops forever; Ctrl+C stops)
+cd python && ../.venv/bin/python headless.py --folder /path/to/music
 
 # Headless end-to-end verification (no hardware needed)
 cd python && ../.venv/bin/python pipeline_test.py
 
 # Unit tests
-cd python && ../.venv/bin/python -m pytest test_pack.py -q
+cd python && ../.venv/bin/python -m pytest test_pack.py test_render.py test_audio.py -q
 
 # Read ESP32 boot banner / diagnostics (after flashing or reset)
 cd python && ../.venv/bin/python -c "
@@ -185,7 +190,9 @@ Full detail in git log; the lessons that matter:
 
 ## 10. What's next
 
-See **`docs/superpowers/plans/2026-08-25-headless-rewrite.md`**: approved plan
-to replace pygame/tkinter with a minimal sounddevice+numpy headless stack,
-vectorized rendering, and one unified settings file (`python/settings.py`).
-Revert point if that rewrite breaks anything: `git checkout v1-working`.
+The headless rewrite (`docs/superpowers/plans/2026-08-25-headless-rewrite.md`)
+is code-complete: sounddevice+numpy stack, vectorized rendering, all tunables
+in `python/settings.py`. Remaining: **hardware acceptance** — reconnect the
+board, run headless.py ≥2 min, confirm smooth + synced, read `[diag]` for
+stale/resync ≈ 0 (enable `SERIAL_DIAGNOSTICS` + re-flash if wanted), then tag
+`v2-headless`. Revert point if anything broke: `git checkout v1-working`.
