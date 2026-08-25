@@ -1,56 +1,54 @@
 import numpy as np
-import librosa
+import settings as S
 
 # ============================================
 # FFT AUDIO PROCESSOR
 # ============================================
 
-fft_size   = 2048
-hop_length = 512
+fft_size = 2048
 
-PEAK_DECAY = 0.998
 PEAK_FLOOR = 1e-3
 
 
 class AudioProcessor:
 
-    def __init__(self, cfg=None):
-        self._cfg          = cfg   # SharedState — may be None
+    def __init__(self):
         self.audio         = None
         self.sample_rate   = None
         self.total_samples = 0
         self.position      = 0
         self._peaks        = None
         self._band_cache   = None  # (bands_tuple, band_data)
+        self._bands        = S.BANDS
 
     # ----------------------------------------
-    # Load a new file
+    # Load pre-decoded samples (no file I/O).
+    # bands: optional [[low,high,gain], ...] override; defaults to
+    # settings.BANDS.
     # ----------------------------------------
-    def load(self, filename: str):
-        self.audio, self.sample_rate = librosa.load(filename, sr=None, mono=True)
+    def load_array(self, samples, samplerate, bands=None):
+        self.audio         = np.asarray(samples, dtype=np.float32)
+        self.sample_rate   = int(samplerate)
         self.total_samples = len(self.audio)
         self.position      = 0
-        n_bands = len(self._cfg.get_bands()) if self._cfg else 32
-        self._peaks        = np.full(n_bands, PEAK_FLOOR)
+        if bands is not None:
+            self._bands = bands
+        self._peaks        = np.full(len(self._bands), PEAK_FLOOR)
         self._band_cache   = None
 
     # ----------------------------------------
-    # Build bin→band mapping (cached)
+    # Build bin->band mapping (cached)
     # Rebuilds when bands list changes.
     # ----------------------------------------
     def _get_band_data(self):
-        if self._cfg is None:
-            return []
-
-        bands = self._cfg.get_bands()   # [[low,high,gain], ...]
-        key   = tuple(tuple(b) for b in bands)
+        key = tuple(tuple(b) for b in self._bands)
 
         if self._band_cache and self._band_cache[0] == key:
             return self._band_cache[1]
 
         freqs     = np.fft.rfftfreq(fft_size, d=1.0 / self.sample_rate)
         band_data = []
-        for low, high, gain in bands:
+        for low, high, gain in self._bands:
             bins = np.where((freqs >= low) & (freqs < high))[0]
             band_data.append({"bins": bins, "gain": gain})
 
@@ -64,10 +62,9 @@ class AudioProcessor:
         if self.audio is None:
             return None
 
-        # Guard against pygame.mixer.music.get_pos() returning -1 (music
-        # not yet playing / stalled). A negative position would slice the
-        # audio array backward -> empty chunk -> FFT crash -> visualizer
-        # thread dies silently -> frozen wall.
+        # Guard against a negative/None playback position slicing the audio
+        # array backward -> empty chunk -> FFT crash -> visualizer thread
+        # dies silently -> frozen wall.
         if playback_ms is None or playback_ms < 0:
             return None
 
@@ -94,8 +91,8 @@ class AudioProcessor:
 
         compressed = np.log1p(raw)
 
-        peak_decay = self._cfg.peak_decay if self._cfg else PEAK_DECAY
-        gamma      = self._cfg.gamma      if self._cfg else 1.4
+        peak_decay = S.PEAK_DECAY
+        gamma      = S.GAMMA
 
         # Resize peaks array if band count changed
         if len(self._peaks) != len(band_data):
