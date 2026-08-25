@@ -12,6 +12,7 @@ import time
 import numpy as np
 import soundfile as sf
 
+import pack
 import serial_sink
 import settings as S
 from audio import AudioPlayer
@@ -35,6 +36,10 @@ def render_loop(player, processor, renderer, smoothed, sink, fps):
     """One pass of the frame loop while `player` plays. Returns when track ends."""
     r, d = S.RESPONSIVENESS, S.RESPONSIVENESS * S.DECAY_RATIO
     frame_gap = 1.0 / fps
+    # Heartbeat resync: re-announce seq=0 every ~15s so a burst of wire loss
+    # (>8 consecutive frames) can never lock the ESP32's SEQ gate permanently.
+    resync_every = max(1, fps * 15)
+    since_resync = 0
     next_frame = time.monotonic()
     while not player.ended:
         fft = processor.get_frame_at(player.pos_ms)
@@ -45,12 +50,20 @@ def render_loop(player, processor, renderer, smoothed, sink, fps):
         renderer.advance()
         frame = renderer.build(smoothed.tolist())
         sink.send_frame(frame)
+        since_resync += 1
+        if since_resync >= resync_every:
+            pack.reset_seq()          # next send carries seq=0 (host restart)
+            since_resync = 0
         next_frame += frame_gap
         delay = next_frame - time.monotonic()
         if delay > 0:
             time.sleep(delay)
         else:
-            next_frame = time.monotonic()   # fell behind; don't burst-catch-up
+            # fell behind — don't burst-catch-up, and assume frames were lost
+            # in the gap: force a seq=0 resync on the next send.
+            next_frame = time.monotonic()
+            pack.reset_seq()
+            since_resync = 0
     return smoothed
 
 

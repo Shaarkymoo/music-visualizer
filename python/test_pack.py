@@ -71,3 +71,14 @@ def test_chunk0_white_dots_go_up_from_bottom_right():
     # Sanity: physical LED 0 (chain order) drives wall (15,7) = bottom-right
     # of the bottom-left board, i.e. it displays logical index 15*32+7.
     assert pack.REMAP[0] == 15 * 32 + 7
+def test_reset_seq_forces_host_restart():
+    import pack
+    pack._seq = 5000                      # arbitrary mid-stream position
+    pack.pack_frame([[ (0,0,0) ]*pack.GRID_COLS for _ in range(pack.GRID_ROWS)])  # seq 5000 -> 5001
+    pack.reset_seq()
+    d1 = pack.pack_frame([[ (0,0,0) ]*pack.GRID_COLS for _ in range(pack.GRID_ROWS)])
+    s1 = int.from_bytes(d1[4:6], "little")
+    assert s1 == 0                        # restart token on the wire
+    d2 = pack.pack_frame([[ (0,0,0) ]*pack.GRID_COLS for _ in range(pack.GRID_ROWS)])
+    s2 = int.from_bytes(d2[4:6], "little")
+    assert s2 == 1                        # continues normally after resync

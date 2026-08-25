@@ -74,6 +74,18 @@ REMAP = build_remap()
 _seq = 0
 
 
+def reset_seq():
+    """Force the NEXT frame to carry seq=0 — the firmware's host-restart
+    resync token (protocol: seq==0 is always accepted, expected becomes 1).
+
+    Call after any stall that may have dropped >8 consecutive frames on the
+    wire: without it, a single such gap permanently locks the SEQ gate
+    (every later frame is 'stale') until the u16 counter wraps by itself.
+    """
+    global _seq
+    _seq = 0
+
+
 def pack_frame(frame):
     """frame: 16x32 list-of-lists of (r, g, b) tuples. Returns 1542-byte packet."""
     global _seq

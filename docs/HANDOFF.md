@@ -35,16 +35,22 @@ PC (python/)                                ESP32 (src/main.cpp)
 **v1 (pygame/tkinter stack):** user-confirmed smooth/synced/zero-corruption.
 Tag **`v1-working`** (`be3c1a7`) preserved as revert point.
 
-**v2 (headless rewrite, 2026-08-25):** code complete and verified headlessly
-(imports, 12/12 unit tests, pipeline checks, pio build). Hardware acceptance
-(wall rendering ≥2 min, diag counters) pending — see §10.
+**v2 (headless rewrite, 2026-08-26):** accepted on hardware by the user.
+sounddevice+numpy stack, seq=0 heartbeat resync, 25 fps. Hardware-verified:
+no corruption/lockouts; palette motion smooth. Known characteristic: ~50–70%
+of sent frames are lost to `show()` RX-starvation windows (see §9) — each
+delivered frame is still audio-synced, so the wall shows a slightly sparser
+but correct animation.
 
 | Component | State |
 |---|---|
-| Firmware (`src/main.cpp`) | ✅ flashed & verified — boot banner `MODE: USB receive / BAUD: 921600 / READY` (unchanged by v2) |
-| Python app (`python/headless.py`) | ✅ v2 entry point — hardware smoke test pending |
+| Firmware (`src/main.cpp`) | ✅ v2 build flashed — USB receive @921600, SERIAL_DIAGNOSTICS off |
+| Python app (`python/headless.py`) | ✅ entry point, hardware-accepted |
 | Panel remap | ✅ confirmed by chase test — see §5 |
-| Tests | ✅ 7/7 `test_pack.py`, 2/2 `test_render.py`, 3/3 `test_audio.py`, pipeline PASS |
+| Tests | ✅ 8/8 `test_pack.py`, 2/2 `test_render.py`, 3/3 `test_audio.py`, pipeline PASS |
+
+**Tag `v2-headless` = current accepted state. Tag `v1-working` = pre-rewrite
+revert point.**
 
 ## 3. Key numbers (memorize these)
 
@@ -179,20 +185,35 @@ Full detail in git log; the lessons that matter:
 
 ## 9. Known limits & quirks
 
-- ~31 fps hard ceiling (§3). 25 fps chosen for margin. Don't raise without
-  overlapping receive+show (double-buffering + FastLED async RMT).
+- **Frame delivery is ~50–70%, not ~100%.** `FastLED.show()` blocks the ESP32
+  for 15.86 ms per frame; UART bytes arriving inside that window die silently
+  (HW FIFO starvation), so whole frames vanish. Audio-thread jitter bunches
+  arrivals and worsens it. Mitigations in place: firmware SEQ gate absorbs
+  gaps ≤8; `headless.py` sends a seq=0 heartbeat (~every 15 s) + after any
+  loop stall, so a >8-gap can never lock the gate permanently. Each delivered
+  frame is position-synced to the audio clock — drops sparser the animation,
+  never desync it. Real fix = overlapping receive+show (async RMT /
+  double-buffering) in firmware, deliberately deferred.
+- Reading serial while player runs: opening /dev/ttyUSB0 toggles DTR/RTS and
+  can reset the board mid-run. Read diag only between runs.
+- ~31 fps hard wire ceiling (§3). 25 fps chosen empirically (2026-08-26):
+  user preferred its motion over 15/20 despite higher loss rate.
 - Board 5 first-LED color quirk (§4).
 - `udp_sink.py` is written but dormant; firmware UDP path behind
   `ENABLE_UDP`, also dormant. Enabling requires fixing the UDP handler
   (packet-size check expects 1540, should be 1542; header offset wrong) —
   noted in review, never exercised.
 - `dimensions.xlsx` is an old density-comparison sheet, NOT panel order data.
+- Hardware test sessions: keep runs ≤30 s unless the user asks otherwise;
+  board needs cooling after long sessions (it was once disconnected for that).
 
-## 10. What's next
+## 10. What's next (optional future work)
 
-The headless rewrite (`docs/superpowers/plans/2026-08-25-headless-rewrite.md`)
-is code-complete: sounddevice+numpy stack, vectorized rendering, all tunables
-in `python/settings.py`. Remaining: **hardware acceptance** — reconnect the
-board, run headless.py ≥2 min, confirm smooth + synced, read `[diag]` for
-stale/resync ≈ 0 (enable `SERIAL_DIAGNOSTICS` + re-flash if wanted), then tag
-`v2-headless`. Revert point if anything broke: `git checkout v1-working`.
+v2 is accepted and tagged `v2-headless`. If smoother motion is ever wanted:
+- **Firmware async/double-buffered show()** (overlapping receive+render) —
+  the real fix; would lift delivery toward ~100% and make >25 fps viable.
+  Currently deferred by design.
+- Wire CRC8 (recommendation #6 from an old review) — hardening, only if EMI
+  ever shows up.
+Revert points: `git checkout v2-headless` (accepted state) or `v1-working`
+(pre-rewrite).
