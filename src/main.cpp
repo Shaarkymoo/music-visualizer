@@ -241,6 +241,12 @@ void handleUDP() {
 // SETUP / LOOP
 // ============================================================
 void setup() {
+  // Enlarge the UART RX buffer: default is only 256 bytes, but a frame is
+  // 1542 bytes arriving in ~16ms at 921600 baud. While FastLED.show() runs
+  // (~2-3ms) incoming bytes would overflow the tiny FIFO -> lost bytes ->
+  // corrupt frames -> false magic sync -> "drop stale". 4096 holds several
+  // frames of headroom.
+  Serial.setRxBufferSize(4096);
   Serial.begin(921600);
   delay(500);
   FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS);

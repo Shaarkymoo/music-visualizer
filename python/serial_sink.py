@@ -30,7 +30,10 @@ class SerialSink:
         port = self.port or self._autodetect()
         if not port:
             raise RuntimeError("No serial port found; set port explicitly")
-        self.ser = serial.Serial(port, self.baud, timeout=0)
+        # write_timeout: block until the full frame is written. timeout=0 on
+        # write would let write() truncate a 1542-byte frame when the OS
+        # buffer is full -> partial frame -> ESP32 desync -> "drop stale".
+        self.ser = serial.Serial(port, self.baud, timeout=0, write_timeout=1.0)
 
     def send_frame(self, frame):
         now = time.monotonic()
