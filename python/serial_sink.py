@@ -40,11 +40,24 @@ class SerialSink:
         gap = now - self._last
         if gap < self._min_gap:
             return
+        if self.ser is None or not self.ser.is_open:
+            return   # closed/unplugged — skip silently, keep audio running
         data = pack.pack_frame(frame)
-        written = self.ser.write(data)
-        if written != len(data):
-            print(f"WARN: serial write truncated ({written}/{len(data)} bytes)")
-        self.ser.flush()
+        try:
+            written = self.ser.write(data)
+            if written != len(data):
+                print(f"WARN: serial write truncated ({written}/{len(data)} bytes)")
+            self.ser.flush()
+        except (serial.SerialException, OSError) as e:
+            # USB unplug / port gone mid-playback: drop the link but keep the
+            # visualizer thread (and audio) alive. Reconnect requires restart.
+            print(f"WARN: serial write failed ({e}) — LED output disabled")
+            try:
+                self.ser.close()
+            except Exception:
+                pass
+            self.ser = None
+            return
         self._last = now
 
     def close(self):
