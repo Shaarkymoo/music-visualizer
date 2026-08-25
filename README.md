@@ -33,6 +33,7 @@ pio run -t upload
 
 - **Baud:** 921600 (both `src/main.cpp` and `python/settings.py` — must match)
 - **Frames:** MAGIC(2=0xAA 0xAA) + LEN(2 LE=0x0600) + SEQ(2 LE) + 1536 raw GRB bytes = 1542 bytes/frame
+- **Flow control:** ESP32 sends ACK byte `0x01` after each frame is rendered; Python holds the next frame until it arrives (lock-step, no frames lost during LED update). A missed ack degrades that one cycle to fire-and-forget.
 - The ESP32 prints `BAUD: 921600` at boot — confirms the firmware matches the PC side. If Python sends a different baud than the firmware listens at, you get garbage and `drop stale` spam.
 
 ## Serial fixes (2026-08-24)

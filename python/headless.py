@@ -33,15 +33,21 @@ def decode(path):
 
 
 def render_loop(player, processor, renderer, smoothed, sink, fps):
-    """One pass of the frame loop while `player` plays. Returns when track ends."""
+    """One pass of the frame loop while `player` plays. Returns when track ends.
+
+    Pacing under lock-step: send_frame() blocks until the ESP32 acks the
+    render, so the handshake itself spaces frames. We only top up to the
+    fps target when the round trip is faster than the interval — no absolute
+    schedule, so 'falling behind' (and its resync churn) cannot happen.
+    """
     r, d = S.RESPONSIVENESS, S.RESPONSIVENESS * S.DECAY_RATIO
     frame_gap = 1.0 / fps
-    # Heartbeat resync: re-announce seq=0 every ~15s so a burst of wire loss
-    # (>8 consecutive frames) can never lock the ESP32's SEQ gate permanently.
+    # Belt-and-braces: re-announce seq=0 periodically so an unexpected
+    # >8-frame gap (e.g. USB hiccup) can never lock the ESP32's SEQ gate.
     resync_every = max(1, fps * 15)
     since_resync = 0
-    next_frame = time.monotonic()
     while not player.ended:
+        iter_start = time.monotonic()
         fft = processor.get_frame_at(player.pos_ms)
         if fft is not None:
             f = np.asarray(fft)
@@ -54,16 +60,9 @@ def render_loop(player, processor, renderer, smoothed, sink, fps):
         if since_resync >= resync_every:
             pack.reset_seq()          # next send carries seq=0 (host restart)
             since_resync = 0
-        next_frame += frame_gap
-        delay = next_frame - time.monotonic()
-        if delay > 0:
-            time.sleep(delay)
-        else:
-            # fell behind — don't burst-catch-up, and assume frames were lost
-            # in the gap: force a seq=0 resync on the next send.
-            next_frame = time.monotonic()
-            pack.reset_seq()
-            since_resync = 0
+        spare = frame_gap - (time.monotonic() - iter_start)
+        if spare > 0:
+            time.sleep(spare)
     return smoothed
 
 
@@ -117,6 +116,8 @@ def main():
         print('\nstopped')
     finally:
         sink.close()
+        print(f"frames sent: {sink.frames_sent} | rendered+acked: {sink.acks_ok} "
+              f"| ack timeouts: {sink.ack_timeouts}")
 
 
 if __name__ == '__main__':

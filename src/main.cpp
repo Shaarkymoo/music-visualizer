@@ -8,6 +8,12 @@
 // #define ENABLE_UDP        // UNCOMMENT to enable future UDP broadcast receive
 // #define SERIAL_DIAGNOSTICS   // UNCOMMENT to print "[diag] rx= stale= ..." every 2s
 
+// Lock-step flow control: byte sent after each FastLED.show() completes.
+// The host (python/serial_sink.py) waits for it before sending the next
+// frame, so no UART bytes ever arrive during the show() RX-starvation
+// window. An unacknowledging host simply never reads it (harmless).
+#define FRAME_ACK_BYTE 0x01
+
 // ============================================================
 // LED MATRIX CONFIG
 // ============================================================
@@ -331,6 +337,12 @@ void loop() {
     FastLED.show();
     diag_last_show_us = micros() - t0;
     diag_shows++;
+    // Flow-control token (lock-step handshake): the host holds its next
+    // frame until it sees this byte, so no UART bytes ever arrive during
+    // the show() window above — the RX-starvation frame-loss mode becomes
+    // impossible by construction. 1 byte/frame is negligible TX traffic,
+    // and an unacknowledging host simply never reads it (harmless).
+    Serial.write(FRAME_ACK_BYTE);
   }
   // periodic diagnostics (every ~2s)
 #ifdef SERIAL_DIAGNOSTICS

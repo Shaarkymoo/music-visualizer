@@ -161,6 +161,12 @@ MAGIC (0xAA 0xAA) | LEN u16 LE (=0x0600) | SEQ u16 LE | 512×3 GRB bytes
 - ESP32 accepts: exact next seq, `seq==0` (host restart), forward jump ≤8.
   Anything else dropped silently.
 - LEN validated ≠ 0x0600 → resync. Mid-frame silence > 50 ms → resync.
+- **Flow control (lock-step):** after each `FastLED.show()` completes, the
+  ESP32 sends one ACK byte `0x01` (`FRAME_ACK_BYTE` in main.cpp). The host
+  (`serial_sink.py`) waits for it before sending the next frame, so no bytes
+  are ever transmitted during the show() RX-starvation window. A lost/late
+  ACK → that cycle proceeds fire-and-forget (`ack_timeouts` counter); old
+  firmware without ACK support still works (timeout every frame).
 
 ## 8. Debug history (what we fixed and why — short index)
 
@@ -185,19 +191,17 @@ Full detail in git log; the lessons that matter:
 
 ## 9. Known limits & quirks
 
-- **Frame delivery is ~50–70%, not ~100%.** `FastLED.show()` blocks the ESP32
-  for 15.86 ms per frame; UART bytes arriving inside that window die silently
-  (HW FIFO starvation), so whole frames vanish. Audio-thread jitter bunches
-  arrivals and worsens it. Mitigations in place: firmware SEQ gate absorbs
-  gaps ≤8; `headless.py` sends a seq=0 heartbeat (~every 15 s) + after any
-  loop stall, so a >8-gap can never lock the gate permanently. Each delivered
-  frame is position-synced to the audio clock — drops sparser the animation,
-  never desync it. Real fix = overlapping receive+show (async RMT /
-  double-buffering) in firmware, deliberately deferred.
+- **Frame delivery: ~100% via lock-step handshake.** Historical issue: show()
+  blocked ESP32 RX ~15.9 ms/frame and arrivals in that window died silently
+  (30–50% loss, cascading SEQ-gate lockouts). Fixed 2026-08-26 with the ACK
+  handshake (§7): the host never transmits inside the danger window. The
+  seq=0 heartbeat remains as a belt-and-braces resync. Throughput ceiling is
+  now round-trip bound (~30 fps) — above the 25 fps setting.
 - Reading serial while player runs: opening /dev/ttyUSB0 toggles DTR/RTS and
   can reset the board mid-run. Read diag only between runs.
-- ~31 fps hard wire ceiling (§3). 25 fps chosen empirically (2026-08-26):
-  user preferred its motion over 15/20 despite higher loss rate.
+- ~31 fps hard wire ceiling (§3); handshake round-trip caps practical rate
+  near 30 fps. 25 fps chosen empirically (2026-08-26): user preferred its
+  motion over 15/20.
 - Board 5 first-LED color quirk (§4).
 - `udp_sink.py` is written but dormant; firmware UDP path behind
   `ENABLE_UDP`, also dormant. Enabling requires fixing the UDP handler
