@@ -18,3 +18,11 @@ __pycache__/
 
 # OpenCode scratch
 .omo/
+
+# user media (never track)
+*.mp3
+*.flac
+*.wav
+*.ogg
+*.m4a
+*.zip
