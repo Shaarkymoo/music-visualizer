@@ -59,7 +59,7 @@ revert point.**
 | `FastLED.show()` | **15.86 ms** | Hardware floor: 512×24 bits × 1.25 µs. Cannot be improved in code. |
 | Frame on wire | **16.7 ms** | 1542 bytes × 10 bits ÷ 921600 baud |
 | **Frame ceiling** | **~31 fps** | receive + show are serialized; 32+ fps ⇒ RX overflow ⇒ corruption |
-| Current cap | 25 fps | `settings.py: SERIAL_MAX_FPS` — safe margin below ceiling |
+| Current cap | **24 fps** | `settings.py: SERIAL_MAX_FPS` — user-chosen; measured ceiling ~27 fps @921600 under lock-step |
 | Serial baud | 921600 | must match on both sides; firmware prints it at boot |
 | ESP32 UART RX buffer | 4096 B | `setRxBufferSize(4096)` before `begin()`; default 256 B overflows instantly |
 | Frame size | 1542 B | magic 2 + LEN 2 + SEQ 2 + payload 512×3 |

@@ -58,13 +58,13 @@ ALL_BOARDS_ROTATED_180 = True
 
 SERIAL_PORT = None       # None = auto-detect; or set e.g. "/dev/ttyUSB0"
 SERIAL_BAUD = 921600     # must match src/main.cpp Serial.begin()
-SERIAL_MAX_FPS = 25      # user-tuned 2026-08-26. FastLED.show() blocks ESP32
-                         # RX ~16ms/frame; arrivals during that window die
-                         # silently, so delivery% falls as fps rises
-                         # (25fps -> ~20% delivered + lockouts, 15fps -> ~70%).
-                         # seq=0 heartbeat in headless.py prevents lockouts.
-                         # Hard wire ceiling is ~31fps; do not raise without
-                         # the firmware async-RMT/double-buffer fix.
+SERIAL_MAX_FPS = 24      # user-tuned 2026-08-26. Lock-step handshake makes
+                         # delivery lossless; throughput is round-trip bound
+                         # (write ~18.5ms + show ~15.4ms + ack path). Measured
+                         # on hardware: 24fps -> 477/480 acked, 27fps -> 267/270
+                         # (the practical ceiling), 30+ -> degradation.
+                         # NOTE: keep sink max_fps and this value aligned via
+                         # --fps; do NOT run two competing throttles.
 
 # ============================================================
 # 5. FFT BANDS — [low_hz, high_hz, gain] x 32

@@ -1,0 +1,4 @@
+# music-visualizer: enable low-latency RX buffering on the wall's CP2102
+# Fires ONLY for Silicon Labs VID 10c4 / PID ea60 / serial 0001 enumerating
+# a tty. Runs the root-owned helper at /usr/local/bin/mv-lowlatency.
+ACTION=="add", SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ATTRS{serial}=="0001", RUN+="/usr/local/bin/mv-lowlatency /dev/%k"

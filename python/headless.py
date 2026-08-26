@@ -104,8 +104,11 @@ def main():
         raise SystemExit(f'no audio files found in {args.folder}')
     print(f'{len(playlist)} tracks')
 
+    # Single pacing governor: render_loop sleeps to the fps target; the sink's
+    # internal min-gap gets 2x headroom so jitter can never silently skip
+    # frames (lock-step round trip already exceeds half the interval).
     sink = serial_sink.SerialSink(port=args.port, baud=S.SERIAL_BAUD,
-                                  max_fps=args.fps)
+                                  max_fps=args.fps * 2)
     sink.open()
     print(f'serial: {sink.ser.port} @ {sink.ser.baudrate}')
 
@@ -118,6 +121,9 @@ def main():
         sink.close()
         print(f"frames sent: {sink.frames_sent} | rendered+acked: {sink.acks_ok} "
               f"| ack timeouts: {sink.ack_timeouts}")
+        if sink.frames_sent:
+            print(f"last cycle: write={sink.last_write_ms:.1f}ms "
+                  f"ack-wait={sink.last_ack_ms:.1f}ms")
 
 
 if __name__ == '__main__':

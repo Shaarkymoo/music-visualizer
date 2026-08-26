@@ -1,0 +1,64 @@
+#!/usr/bin/python3
+"""Set ASYNC_LOW_LATENCY on the music-visualizer's CP2102 serial port.
+
+Called automatically by the udev rule
+    /etc/udev/rules.d/99-music-visualizer-cp2102.rules
+whenever THAT specific USB adapter (Silicon Labs VID 10c4 / PID ea60 /
+serial 0001) enumerates a tty. Effect: small RX packets are forwarded to
+programs within ~1ms instead of being batched ~16ms, which speeds up the
+render-ACK round trip of the LED wall link.
+
+Scope: one flag bit in the kernel's runtime port structure for this one
+device. No kernel code/configuration changes; reset by unplug/reboot.
+Removal: delete the .rules file and this script.
+"""
+import fcntl
+import struct
+import sys
+import time
+
+ASYNC_LOW_LATENCY = 0x2000
+TIOCGSERIAL = 0x541E
+TIOCSSERIAL = 0x541F
+SERIAL_STRUCT_FMT = "=iiIiiiiiHcxiH2H2xIH4xQ"
+
+
+def set_low_latency(dev):
+    fd = open(dev)
+    try:
+        buf = bytearray(struct.calcsize(SERIAL_STRUCT_FMT))
+        fcntl.ioctl(fd.fileno(), TIOCGSERIAL, bytes(buf), True)
+        fields = list(struct.unpack(SERIAL_STRUCT_FMT, bytes(buf)))
+        if fields[4] & ASYNC_LOW_LATENCY:
+            return "already set"
+        fields[4] |= ASYNC_LOW_LATENCY
+        fcntl.ioctl(fd.fileno(), TIOCSSERIAL,
+                    struct.pack(SERIAL_STRUCT_FMT, *fields), True)
+
+        buf2 = bytearray(struct.calcsize(SERIAL_STRUCT_FMT))
+        fcntl.ioctl(fd.fileno(), TIOCGSERIAL, bytes(buf2), True)
+        ok = struct.unpack(SERIAL_STRUCT_FMT, bytes(buf2))[4] & ASYNC_LOW_LATENCY
+        return "verified" if ok else "SET did not stick"
+    finally:
+        fd.close()
+
+
+def main():
+    dev = sys.argv[1] if len(sys.argv) > 1 else "/dev/ttyUSB0"
+    last_err = None
+    for attempt in range(5):          # tty node may lag enumeration briefly
+        try:
+            print(f"{dev}: {set_low_latency(dev)}")
+            return
+        except FileNotFoundError as e:
+            last_err = e
+            time.sleep(0.2)
+        except PermissionError as e:
+            print(f"{dev}: refused ({e}) - must run as root")
+            sys.exit(1)
+    print(f"{dev}: gave up ({last_err})")
+    sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

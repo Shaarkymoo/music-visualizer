@@ -32,8 +32,9 @@ class FakeSer:
         self.is_open = False
 
 
-def make_sink(max_fps=100000):
-    sink = SerialSink(port="/dev/fake", baud=921600, max_fps=max_fps)
+def make_sink(max_fps=100000, ack_timeout=0.05):
+    sink = SerialSink(port="/dev/fake", baud=921600, max_fps=max_fps,
+                      ack_timeout=ack_timeout)
     sink.ser = FakeSer(reads=[0x01])
     return sink
 
@@ -70,6 +71,14 @@ def test_wrong_byte_counts_as_timeout():
     sink.ser._reads = [ord("M")]    # e.g. banner text, not an ACK
     sink.send_frame(make_frame())
     assert sink.ack_timeouts == 1 and sink.acks_ok == 0
+
+
+def test_idle_pings_are_skipped():
+    # device streams 0x00 while idle; host must skip them and take the 0x01
+    sink = make_sink()
+    sink.ser._reads = [0x00, 0x00, 0x00, 0x01]
+    sink.send_frame(make_frame())
+    assert sink.acks_ok == 1 and sink.ack_timeouts == 0
 
 
 def test_throttle_still_applies():

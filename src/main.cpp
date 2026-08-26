@@ -12,6 +12,8 @@
 // The host (python/serial_sink.py) waits for it before sending the next
 // frame, so no UART bytes ever arrive during the show() RX-starvation
 // window. An unacknowledging host simply never reads it (harmless).
+// Host-side note: serial_sink.py sets ASYNC_LOW_LATENCY on the tty so this
+// 1-byte ack is not held back by the CP2102's 16 ms buffering timer.
 #define FRAME_ACK_BYTE 0x01
 
 // ============================================================
