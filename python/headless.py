@@ -7,6 +7,7 @@ Usage: cd python && ../.venv/bin/python headless.py --folder /path/to/music
 import argparse
 import glob
 import os
+import subprocess
 import time
 
 import numpy as np
@@ -92,16 +93,63 @@ def play_folder(playlist, sink, fps):
             player.stop()
 
 
+def collect_files(selections):
+    """Resolve right-click inputs: files pass through (audio extensions only),
+    folders expand to the audio files they contain. Returns (sorted_paths,
+    any_dir_seen) — any_dir_seen tells the caller to shuffle, so a folder
+    always plays randomised while explicit selections keep their order."""
+    wanted = {e.lstrip('*').lstrip('.') for e in AUDIO_EXTS}   # {'mp3', ...}
+    files, had_dir = [], False
+    for p in selections:
+        if os.path.isdir(p):
+            had_dir = True
+            files += sum([glob.glob(os.path.join(p, e)) for e in AUDIO_EXTS], [])
+        elif os.path.isfile(p):
+            ext = os.path.splitext(p)[1].lower().lstrip('.')
+            if ext in wanted:
+                files.append(p)
+    out = sorted({os.path.abspath(f) for f in files})
+    return out, had_dir
+
+
+def _notify(msg):
+    """Best-effort desktop notification (COSMIC/GNOME); silent if unavailable."""
+    try:
+        subprocess.run(['notify-send', '-a', 'Music Visualiser', 'Music Visualiser',
+                        msg], timeout=5,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('--folder', required=True)
+    ap.add_argument('inputs', nargs='*',
+                    help='audio files and/or folders of audio (folders shuffle)')
+    ap.add_argument('--folder',
+                    help='play every audio file in this folder (loops forever)')
+    ap.add_argument('--shuffle', action='store_true',
+                    help='shuffle the playlist')
     ap.add_argument('--fps', type=int, default=S.SERIAL_MAX_FPS)
     ap.add_argument('--port', default=S.SERIAL_PORT)
     args = ap.parse_args()
 
-    playlist = build_playlist(args.folder)
-    if not playlist:
-        raise SystemExit(f'no audio files found in {args.folder}')
+    if args.inputs:
+        playlist, had_dir = collect_files(args.inputs)
+        if not playlist:
+            raise SystemExit('no playable audio among: ' + ', '.join(args.inputs))
+        if args.shuffle or had_dir:
+            import random
+            random.shuffle(playlist)
+    elif args.folder:
+        playlist = build_playlist(args.folder)
+        if not playlist:
+            raise SystemExit(f'no audio files found in {args.folder}')
+        if args.shuffle:
+            import random
+            random.shuffle(playlist)
+    else:
+        ap.error('give either file/folder paths or --folder DIR')
     print(f'{len(playlist)} tracks')
 
     # Single pacing governor: render_loop sleeps to the fps target; the sink's
@@ -109,8 +157,13 @@ def main():
     # frames (lock-step round trip already exceeds half the interval).
     sink = serial_sink.SerialSink(port=args.port, baud=S.SERIAL_BAUD,
                                   max_fps=args.fps * 2)
-    sink.open()
+    try:
+        sink.open()
+    except Exception as e:
+        _notify(f'LED board not reachable: {e}')
+        raise SystemExit(1)
     print(f'serial: {sink.ser.port} @ {sink.ser.baudrate}')
+    _notify(f'Playing {len(playlist)} track{"s" if len(playlist) != 1 else ""}')
 
     try:
         while True:                          # folder loops forever

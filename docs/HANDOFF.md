@@ -130,6 +130,10 @@ pio run --project-dir . -t upload
 # Run the player (folder loops forever; Ctrl+C stops)
 cd python && ../.venv/bin/python headless.py --folder /path/to/music
 
+# Or without a terminal: right-click song(s)/folder -> Open With -> Music
+# Visualiser (installed via ~/.local/share/applications/music-visualiser.desktop;
+# helper: tools/play-with-visualiser; stop: "Stop Music Visualiser" in launcher)
+
 # Headless end-to-end verification (no hardware needed)
 cd python && ../.venv/bin/python pipeline_test.py
 

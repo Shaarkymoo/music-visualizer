@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""Right-click handler for the music visualiser.
+
+Invoked by the .desktop entry ("Open With -> Music Visualiser") with any
+number of audio files and/or folders as arguments. Kills a previous
+instance, verifies the LED board is plugged in, then spawns headless.py
+fully detached (no terminal, no window). Playback state lands in
+~/.local/share/music-visualiser/last.log.
+"""
+import glob
+import os
+import signal
+import subprocess
+import sys
+import time
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HEADLESS = os.path.join(REPO, "python", "headless.py")
+VENV_PY = os.path.join(REPO, ".venv", "bin", "python")
+LOG_DIR = os.path.expanduser("~/.local/share/music-visualiser")
+LOG_FILE = os.path.join(LOG_DIR, "last.log")
+
+
+def notify(msg):
+    try:
+        subprocess.run(["notify-send", "-a", "Music Visualiser",
+                        "Music Visualiser", msg],
+                       timeout=5,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
+def stop_previous():
+    """Gracefully end an already-running visualiser so this one replaces it."""
+    out = subprocess.run(["pgrep", "-f", r"python.*headless\.py"],
+                         capture_output=True, text=True)
+    pids = [int(p) for p in out.stdout.split()]
+    pids = [p for p in pids if p != os.getpid()]
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGINT)
+        except ProcessLookupError:
+            pass
+    if pids:
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            alive = subprocess.run(["pgrep", "-f", r"python.*headless\.py"],
+                                   capture_output=True, text=True)
+            if not alive.stdout.strip():
+                return
+            time.sleep(0.1)
+        for pid in pids:                      # stubborn ones
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def board_present():
+    return bool(glob.glob("/dev/ttyUSB*") or glob.glob("/dev/ttyACM*"))
+
+
+def main():
+    selections = sys.argv[1:]
+    stop_previous()
+
+    if not board_present():
+        notify("LED board not connected - nothing started")
+        print("no serial board present", flush=True)
+        sys.exit(1)
+
+    os.makedirs(LOG_DIR, exist_ok=True)
+    log = open(LOG_FILE, "w")
+    cmd = [VENV_PY, "-u", HEADLESS] + selections   # -u: unbuffered log lines
+    subprocess.Popen(cmd, stdout=log, stderr=log,
+                     start_new_session=True, cwd=os.path.join(REPO, "python"))
+    # give the app a moment to reach the serial port; surface early failures
+    time.sleep(1.5)
+    if subprocess.run(["pgrep", "-f", r"python.*headless\.py"],
+                      capture_output=True, text=True).stdout.strip():
+        print("visualiser running; log:", LOG_FILE, flush=True)
+    else:
+        notify("Visualiser failed to start - see last.log")
+        print("visualiser died immediately; see", LOG_FILE, flush=True)
+
+
+if __name__ == "__main__":
+    main()
