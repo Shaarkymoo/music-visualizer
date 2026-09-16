@@ -133,7 +133,7 @@ VERTICAL_SPREAD = 3.0    # hue degrees per row within a bar
 SPEED_MULTIPLIER = 0.15  # how fast the whole palette rotates over time (0..1)
 SATURATION = 0.90        # 0 = white, 1 = fully saturated color
 ACTIVE_BRIGHTNESS = 1.0  # brightness of "lit" pixels (0..1)
-INACTIVE_BRIGHTNESS = 0.04  # brightness of unlit pixels — faint grid glow.
+INACTIVE_BRIGHTNESS = 0.00  # brightness of unlit pixels — faint grid glow.
                          # Set to 0.0 for pure black background.
 
 # ============================================================
